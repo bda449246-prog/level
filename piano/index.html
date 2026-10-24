@@ -4,7 +4,7 @@
 <style>
 /* Layout: the iOS 計測 > 水準器 screen, plus a scrolling piano strip at the bottom of the stage and a compact settings row on top. Single dark look by design. */
 :root{
-  --bg:#000; --fg:#fff; --level:#34c759; --ref:#ff3b30; --key:#ffd60a;
+  --bg:#000; --fg:#fff; --level:#34c759; --ref:#ff3b30; --key:#ffd60a; --key-soft:#8a7a3a;
   --bar:#121214; --bar-line:#2c2c2e; --muted:#8e8e93; --pill:rgba(44,44,46,.92); --seg-on:#636366;
   --font:-apple-system,BlinkMacSystemFont,"SF Pro Display","Hiragino Sans","Hiragino Kaku Gothic ProN","Helvetica Neue",Arial,sans-serif;
   color-scheme:dark;
@@ -72,10 +72,20 @@ body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--font);overf
             <path id="xmark" d="M16 9.5l5 5M21 9.5l-5 5" style="display:none"/>
           </svg>
         </button>
+        <div class="seg" role="group" aria-label="演奏のしかた">
+          <button type="button" data-play="single" aria-pressed="true">単音</button>
+          <button type="button" data-play="chord" aria-pressed="false">和音</button>
+          <button type="button" data-play="arp" aria-pressed="false">アルペジオ</button>
+        </div>
+        <div class="seg" id="tempo" role="group" aria-label="テンポ" hidden>
+          <button type="button" data-bpm="70" aria-pressed="false">♩70</button>
+          <button type="button" data-bpm="100" aria-pressed="true">♩100</button>
+          <button type="button" data-bpm="130" aria-pressed="false">♩130</button>
+        </div>
       </div>
       <div id="demo" hidden>モーションセンサーを使えない環境です。画面をドラッグすると傾きを再現できます。</div>
     </div>
-    <div id="hint">傾けると角度に合わせて音が鳴ります。タップで今の角度を「ド」にします</div>
+    <div id="hint">傾けると角度に合わせて音が鳴ります。タップで今の角度を「ド」(和音ならC)にします</div>
     <div id="gate" role="button" tabindex="0" aria-label="タップして開始">
       <p>画面をタップすると水準器ピアノが動き出します。<br>モーションへのアクセスを聞かれたら「許可」を選んでください。<br>音が出ないときは消音モードを解除してください。</p>
       <span id="start">タップして開始</span>
@@ -107,7 +117,7 @@ body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--font);overf
   const css = getComputedStyle(document.documentElement);
   const tok = (n, d) => css.getPropertyValue(n).trim() || d;
   const C = { bg: tok('--bg', '#000'), fg: '#fff', ink: '#000', level: tok('--level', '#34c759'),
-              ref: tok('--ref', '#ff3b30'), key: tok('--key', '#ffd60a') };
+              ref: tok('--ref', '#ff3b30'), key: tok('--key', '#ffd60a'), keySoft: tok('--key-soft', '#8a7a3a') };
   const FONT = tok('--font', 'sans-serif');
 
   // In the Claude viewer the tab link to the plain level has nowhere to go.
@@ -130,11 +140,18 @@ body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--font);overf
   let STEP = parseFloat(store.get('step', '2')) || 2;
   let muted = store.get('muted', '0') === '1';
   let tone = store.get('tone', 'guitar');
+  let play = store.get('play', 'single');
+  let bpm = parseFloat(store.get('bpm', '100')) || 100;
+  const playBtns = [...document.querySelectorAll('[data-play]')], bpmBtns = [...document.querySelectorAll('[data-bpm]')];
+  const tempoEl = document.getElementById('tempo');
   const tnPiano = document.getElementById('tnPiano'), tnGuitar = document.getElementById('tnGuitar');
   const scWhite = document.getElementById('scWhite'), scChrom = document.getElementById('scChrom');
   const stepBtns = [...document.querySelectorAll('[data-step]')];
   const muteBtn = document.getElementById('mute');
   function syncUI() {
+    playBtns.forEach(b => b.setAttribute('aria-pressed', b.dataset.play === play));
+    bpmBtns.forEach(b => b.setAttribute('aria-pressed', parseFloat(b.dataset.bpm) === bpm));
+    tempoEl.hidden = play !== 'arp';
     tnPiano.setAttribute('aria-pressed', tone === 'piano'); tnGuitar.setAttribute('aria-pressed', tone === 'guitar');
     scWhite.setAttribute('aria-pressed', scale === 'white'); scChrom.setAttribute('aria-pressed', scale === 'chrom');
     stepBtns.forEach(b => b.setAttribute('aria-pressed', parseFloat(b.dataset.step) === STEP));
@@ -143,14 +160,16 @@ body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--font);overf
     document.getElementById('xmark').style.display = muted ? '' : 'none';
   }
   syncUI();
-  const setTone = v => { tone = v; store.set('tone', v); syncUI(); initAudio(); strike(curMidi, 0.75); };
+  const setTone = v => { tone = v; store.set('tone', v); syncUI(); initAudio(); onNote(); };
+  playBtns.forEach(b => b.addEventListener('click', () => { play = b.dataset.play; store.set('play', play); syncUI(); initAudio(); damp(0.08); onNote(); }));
+  bpmBtns.forEach(b => b.addEventListener('click', () => { bpm = parseFloat(b.dataset.bpm); store.set('bpm', bpm); syncUI(); }));
   tnPiano.addEventListener('click', () => setTone('piano'));
   tnGuitar.addEventListener('click', () => setTone('guitar'));
   scWhite.addEventListener('click', () => { scale = 'white'; store.set('scale', scale); syncUI(); });
   scChrom.addEventListener('click', () => { scale = 'chrom'; store.set('scale', scale); syncUI(); });
   stepBtns.forEach(b => b.addEventListener('click', () => { STEP = parseFloat(b.dataset.step); store.set('step', STEP); syncUI(); }));
   muteBtn.addEventListener('click', () => { muted = !muted; store.set('muted', muted ? '1' : '0'); syncUI();
-    initAudio(); if (muted) damp(0.03); else strike(curMidi, 0.7); });
+    initAudio(); if (muted) damp(0.03); else onNote(); });
   document.querySelectorAll('#controls button').forEach(b => {
     b.addEventListener('pointerdown', e => e.stopPropagation());
     b.addEventListener('pointerup', e => e.stopPropagation());
@@ -222,9 +241,16 @@ body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--font);overf
     if (ksCache.size > 24) ksCache.delete(ksCache.keys().next().value);
     return buf;
   }
-  function pluck(midi, vel) {
-    const t = ac.currentTime + 0.005;
-    damp(0.3); // let the last string ring briefly, like a player moving to the next fret
+  function retire() {
+    while (voices.length > 24) {
+      const old = voices.shift(); const t = ac.currentTime;
+      try { old.out.gain.cancelScheduledValues(t); old.out.gain.setTargetAtTime(0, t, 0.04); } catch (_) {}
+      setTimeout(() => { try { old.out.disconnect(); } catch (_) {} }, 250);
+    }
+  }
+  function pluck(midi, vel, o) {
+    const t = o.t != null ? o.t : ac.currentTime + 0.005;
+    if (!o.noDamp) damp(0.3); // let the last string ring briefly, like a player moving to the next fret
     const src = ac.createBufferSource(); src.buffer = ksBuffer(midi);
     const tone = ac.createBiquadFilter(); tone.type = 'lowpass'; tone.Q.value = 0.3;
     const f = 440 * Math.pow(2, (midi - 69) / 12);
@@ -235,14 +261,14 @@ body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--font);overf
     const v = { out, damped: false };
     voices.push(v);
     src.onended = () => { try { out.disconnect(); } catch (_) {} const i = voices.indexOf(v); if (i >= 0) voices.splice(i, 1); };
-    while (voices.length > 12) { const old = voices.shift(); try { old.out.disconnect(); } catch (_) {} }
+    retire();
   }
 
-  function strike(midi, vel = 0.8) {
+  function strike(midi, vel = 0.8, o = {}) {
     if (!ac || muted || ac.state !== 'running') return;
-    if (tone === 'guitar') return pluck(midi, vel);
-    const t = ac.currentTime + 0.005;
-    damp(0.22); // the previous key is released, like lifting a finger
+    if (tone === 'guitar') return pluck(midi, vel, o);
+    const t = o.t != null ? o.t : ac.currentTime + 0.005;
+    if (!o.noDamp) damp(0.22); // the previous key is released, like lifting a finger
     const f = 440 * Math.pow(2, (midi - 69) / 12);
     const out = ac.createGain(); out.gain.value = 1;
     const lp = ac.createBiquadFilter(); lp.type = 'lowpass'; lp.Q.value = 0.4;
@@ -273,8 +299,8 @@ body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--font);overf
     n.connect(bp); bp.connect(ng); ng.connect(out); n.start(t);
     const v = { out, damped: false };
     voices.push(v);
-    setTimeout(() => { try { out.disconnect(); } catch (_) {} const i = voices.indexOf(v); if (i >= 0) voices.splice(i, 1); }, (dur + 0.6) * 1000);
-    while (voices.length > 12) { const old = voices.shift(); try { old.out.disconnect(); } catch (_) {} }
+    setTimeout(() => { try { out.disconnect(); } catch (_) {} const i = voices.indexOf(v); if (i >= 0) voices.splice(i, 1); }, (dur + 0.8) * 1000);
+    retire();
   }
 
   // ---------- notes ----------
@@ -291,6 +317,59 @@ body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--font);overf
   const nameOf = m => ({ jp: JP[m % 12], en: EN[m % 12] + (Math.floor(m / 12) - 1) });
   const whiteIdx = {}; { let w = 0; for (let m = 21; m <= 108; m++) if (!isBlack(m)) whiteIdx[m] = w++; }
   const WHITE_COUNT = 52;
+
+  // ---------- chords & arpeggio ----------
+  // ドレミ: diatonic triads of C major on each degree. 半音: a major triad on every key.
+  const DIA_Q = ['', 'm', 'm', '', '', 'm', 'dim'];
+  const IV = { '': [0, 4, 7], m: [0, 3, 7], dim: [0, 3, 6] };
+  function chord() {
+    const root = curMidi;
+    const q = scale === 'white' ? DIA_Q[((noteN % 7) + 7) % 7] : '';
+    const [, third, fifth] = IV[q];
+    return { root, q, tones: [root, root + third, root + fifth] };
+  }
+  const clampM = m => Math.max(21, Math.min(108, m));
+  function voicing(c) {
+    const [r, th, fi] = c.tones;
+    // six strings' worth: low root, fifth, root, third, fifth, high root
+    return (tone === 'guitar' ? [r - 12, fi - 12, r, th, fi, r + 12] : [r - 12, r, th, fi, r + 12]).map(clampM);
+  }
+  function chordName(c) {
+    const pc = c.root % 12;
+    const sym = EN[pc].replace('♯', '#') + c.q;
+    return { jp: sym, en: c.tones.map(m => JP[m % 12]).join(' ') };
+  }
+  let sounding = new Set([60]);
+  const lit = [];       // {midi, t} scheduled arpeggio notes, for the keyboard highlight
+  function playChord() {
+    const notes = voicing(chord());
+    damp(0.12);
+    const t0 = ac ? ac.currentTime + 0.01 : 0, gap = tone === 'guitar' ? 0.022 : 0.006;
+    notes.forEach((m, i) => strike(m, 0.62 + (i === 0 ? 0.12 : 0), { t: t0 + i * gap, noDamp: true }));
+    sounding = new Set(notes);
+  }
+  const ARP = [0, 2, 3, 4, 5, 4, 3, 2];
+  let arpNext = 0, arpStep = 0;
+  function arpRestart() { if (!ac) return; damp(0.25); arpStep = 0; arpNext = ac.currentTime + 0.01; lit.length = 0; }
+  function arpTick() {
+    if (!ac || !running || play !== 'arp' || ac.state !== 'running') return;
+    const ahead = ac.currentTime + 0.12, stepDur = 60 / bpm / 2;
+    if (arpNext < ac.currentTime - 0.2) arpNext = ac.currentTime + 0.01; // resume after the tab slept
+    while (arpNext < ahead) {
+      const notes = voicing(chord()), k = ARP[arpStep % ARP.length];
+      const m = notes[Math.min(k, notes.length - 1)];
+      strike(m, arpStep % ARP.length === 0 ? 0.8 : 0.6, { t: arpNext, noDamp: true });
+      lit.push({ midi: m, t: arpNext }); if (lit.length > 16) lit.shift();
+      arpStep++; arpNext += stepDur;
+    }
+  }
+  setInterval(arpTick, 25);
+  function onNote() {
+    if (!running) return;
+    if (play === 'single') { strike(curMidi, 0.8); sounding = new Set([curMidi]); }
+    else if (play === 'chord') playChord();
+    else { arpRestart(); sounding = new Set(voicing(chord())); arpTick(); }
+  }
 
   // ---------- sensor state ----------
   let raw = null, g = [0.04, -0.03, -1], source = 'demo', lastOrient = null, vote = -4, alive = false, running = false;
@@ -326,7 +405,7 @@ body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--font);overf
     window.addEventListener('devicemotion', onMotion);
     try { if (navigator.wakeLock) navigator.wakeLock.request('screen').catch(() => {}); } catch (_) {}
     running = true;
-    setTimeout(() => strike(curMidi, 0.75), 250);
+    setTimeout(onNote, 250);
     const res = await Promise.all(asks);
     const ok = res.some(r => r === 'granted') || asks.length === 0;
     setTimeout(() => { if (!alive) enterDemo(ok
@@ -408,17 +487,24 @@ body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--font);overf
   function keyboard(kbY, kbH, dt) {
     const target = isBlack(curMidi) ? whiteIdx[curMidi - 1] + 1 : whiteIdx[curMidi] + 0.5;
     kbCenter += (target - kbCenter) * (1 - Math.exp(-dt / 0.12));
-    const N = W < 520 ? 15 : 22, kw = W / N;
+    const wide = play !== 'single';
+    const N = W < 520 ? (wide ? 22 : 15) : (wide ? 29 : 22), kw = W / N;
     const xOf = i => W / 2 + (i - kbCenter) * kw;
     ctx.fillStyle = '#0b0b0c'; ctx.fillRect(0, kbY - 6, W, kbH + 12);
     const lo = Math.max(0, Math.floor(kbCenter - N / 2 - 1)), hi = Math.min(WHITE_COUNT - 1, Math.ceil(kbCenter + N / 2 + 1));
-    const hl = flash > 0 ? C.key : C.key;
+    // which keys light: the chord tones softly, the note sounding right now fully
+    let now = null;
+    if (play === 'arp' && ac) { for (const e of lit) if (e.t <= ac.currentTime) now = e.midi; }
+    const fill = (m, base) => {
+      if (play === 'arp') return m === now ? C.key : sounding.has(m) ? C.keySoft : base;
+      return sounding.has(m) ? C.key : base;
+    };
     ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic';
     for (let m = 21; m <= 108; m++) {
       if (isBlack(m)) continue; const i = whiteIdx[m]; if (i < lo || i > hi) continue;
       const x = xOf(i);
       rrect(x + 0.75, kbY, kw - 1.5, kbH, Math.min(4, kw * 0.15));
-      ctx.fillStyle = m === curMidi ? hl : '#f2f2f7'; ctx.fill();
+      ctx.fillStyle = fill(m, '#f2f2f7'); ctx.fill();
       if (m % 12 === 0) { ctx.fillStyle = '#8e8e93'; ctx.font = `500 ${Math.max(9, Math.min(11, kw * 0.36))}px ${FONT}`;
         ctx.fillText('C' + (m / 12 - 1), x + kw / 2, kbY + kbH - 6); }
     }
@@ -426,7 +512,7 @@ body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--font);overf
       if (!isBlack(m)) continue; const i = whiteIdx[m - 1] + 1; if (i < lo || i > hi + 1) continue;
       const bw = kw * 0.58, x = xOf(i) - bw / 2;
       rrect(x, kbY, bw, kbH * 0.6, Math.min(3, bw * 0.15));
-      ctx.fillStyle = m === curMidi ? hl : '#1c1c1e'; ctx.fill();
+      ctx.fillStyle = fill(m, '#1c1c1e'); ctx.fill();
     }
   }
 
@@ -458,8 +544,7 @@ body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--font);overf
     const p = value / STEP;
     if (Math.abs(p - noteN) > 0.62) noteN = Math.round(p);
     const midi = toMidi(noteN);
-    if (midi !== curMidi) { curMidi = midi; if (running) strike(midi); flash = 0.15; }
-    flash = Math.max(0, flash - dt);
+    if (midi !== curMidi) { curMidi = midi; onNote(); }
 
     if (Math.abs(value - shown) >= 0.06 || t - shownAt > 400) { shown = value; shownAt = t; }
     const absv = Math.abs(shown);
@@ -467,7 +552,7 @@ body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--font);overf
     const hasRef = !!refVec || refRoll != null;
     const bg = isLevel ? C.level : (hasRef ? C.ref : C.bg);
     const text = fmt(mode === 'flat' ? absv : shown);
-    const nm = nameOf(curMidi);
+    const nm = play === 'single' ? nameOf(curMidi) : chordName(chord());
 
     ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
     const kbH = Math.max(70, Math.min(110, H * 0.15)), kbY = H - kbH - 8;
