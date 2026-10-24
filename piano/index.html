@@ -22,6 +22,11 @@ body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--font);overf
 .seg{display:inline-flex;background:var(--pill);border-radius:9px;padding:2px;pointer-events:auto}
 .seg button,#mute{appearance:none;border:0;background:transparent;color:var(--fg);font:500 13px var(--font);padding:6px 10px;border-radius:7px;cursor:pointer}
 .seg button[aria-pressed="true"]{background:var(--seg-on)}
+.pick{position:relative;display:inline-flex;align-items:center;gap:6px;background:var(--pill);border-radius:9px;padding-left:10px;pointer-events:auto;cursor:pointer}
+.pick-label{font:500 11px var(--font);color:var(--muted);letter-spacing:.04em}
+.pick select{appearance:none;-webkit-appearance:none;border:0;background:transparent;color:var(--fg);font:600 13px var(--font);padding:6px 26px 6px 0;cursor:pointer}
+.pick::after{content:"";position:absolute;right:10px;top:50%;width:6px;height:6px;border-right:1.6px solid var(--fg);border-bottom:1.6px solid var(--fg);transform:translateY(-70%) rotate(45deg);pointer-events:none}
+.pick:focus-within{outline:2px solid var(--level);outline-offset:2px}
 #mute{background:var(--pill);border-radius:9px;padding:6px 9px;display:inline-flex;align-items:center;pointer-events:auto}
 #mute svg{width:18px;height:18px}
 #mute[aria-pressed="true"]{color:var(--ref)}
@@ -51,10 +56,16 @@ body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--font);overf
     <canvas id="cv"></canvas>
     <div id="top">
       <div id="controls">
-        <div class="seg" role="group" aria-label="音色">
-          <button id="tnPiano" type="button" aria-pressed="false">ピアノ</button>
-          <button id="tnGuitar" type="button" aria-pressed="true">ギター</button>
-        </div>
+        <label class="pick" for="inst">
+          <span class="pick-label">楽器</span>
+          <select id="inst" aria-label="楽器">
+            <option value="piano">ピアノ</option>
+            <option value="guitar">ギター</option>
+            <option value="violin">バイオリン</option>
+            <option value="trumpet">トランペット</option>
+            <option value="sax">サックス</option>
+          </select>
+        </label>
         <div class="seg" role="group" aria-label="音階">
           <button id="scWhite" type="button" aria-pressed="true">ドレミ</button>
           <button id="scChrom" type="button" aria-pressed="false">半音</button>
@@ -144,7 +155,8 @@ body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--font);overf
   let bpm = parseFloat(store.get('bpm', '100')) || 100;
   const playBtns = [...document.querySelectorAll('[data-play]')], bpmBtns = [...document.querySelectorAll('[data-bpm]')];
   const tempoEl = document.getElementById('tempo');
-  const tnPiano = document.getElementById('tnPiano'), tnGuitar = document.getElementById('tnGuitar');
+  const instSel = document.getElementById('inst');
+  if (![...instSel.options].some(o => o.value === tone)) tone = 'guitar';
   const scWhite = document.getElementById('scWhite'), scChrom = document.getElementById('scChrom');
   const stepBtns = [...document.querySelectorAll('[data-step]')];
   const muteBtn = document.getElementById('mute');
@@ -152,7 +164,7 @@ body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--font);overf
     playBtns.forEach(b => b.setAttribute('aria-pressed', b.dataset.play === play));
     bpmBtns.forEach(b => b.setAttribute('aria-pressed', parseFloat(b.dataset.bpm) === bpm));
     tempoEl.hidden = play !== 'arp';
-    tnPiano.setAttribute('aria-pressed', tone === 'piano'); tnGuitar.setAttribute('aria-pressed', tone === 'guitar');
+    instSel.value = tone;
     scWhite.setAttribute('aria-pressed', scale === 'white'); scChrom.setAttribute('aria-pressed', scale === 'chrom');
     stepBtns.forEach(b => b.setAttribute('aria-pressed', parseFloat(b.dataset.step) === STEP));
     muteBtn.setAttribute('aria-pressed', muted); muteBtn.setAttribute('aria-label', muted ? '消音を解除' : '消音');
@@ -160,17 +172,16 @@ body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--font);overf
     document.getElementById('xmark').style.display = muted ? '' : 'none';
   }
   syncUI();
-  const setTone = v => { tone = v; store.set('tone', v); syncUI(); initAudio(); onNote(); };
-  playBtns.forEach(b => b.addEventListener('click', () => { play = b.dataset.play; store.set('play', play); syncUI(); initAudio(); damp(0.08); onNote(); }));
+  const setTone = v => { releaseHeld(0.12); damp(0.1); tone = v; store.set('tone', v); syncUI(); initAudio(); onNote(); };
+  playBtns.forEach(b => b.addEventListener('click', () => { play = b.dataset.play; store.set('play', play); syncUI(); initAudio(); releaseHeld(0.12); damp(0.08); onNote(); }));
   bpmBtns.forEach(b => b.addEventListener('click', () => { bpm = parseFloat(b.dataset.bpm); store.set('bpm', bpm); syncUI(); }));
-  tnPiano.addEventListener('click', () => setTone('piano'));
-  tnGuitar.addEventListener('click', () => setTone('guitar'));
+  instSel.addEventListener('change', () => setTone(instSel.value));
   scWhite.addEventListener('click', () => { scale = 'white'; store.set('scale', scale); syncUI(); });
   scChrom.addEventListener('click', () => { scale = 'chrom'; store.set('scale', scale); syncUI(); });
   stepBtns.forEach(b => b.addEventListener('click', () => { STEP = parseFloat(b.dataset.step); store.set('step', STEP); syncUI(); }));
   muteBtn.addEventListener('click', () => { muted = !muted; store.set('muted', muted ? '1' : '0'); syncUI();
-    initAudio(); if (muted) damp(0.03); else onNote(); });
-  document.querySelectorAll('#controls button').forEach(b => {
+    initAudio(); if (muted) { damp(0.03); releaseHeld(0.05); } else onNote(); });
+  document.querySelectorAll('#controls button, #controls .pick').forEach(b => {
     b.addEventListener('pointerdown', e => e.stopPropagation());
     b.addEventListener('pointerup', e => e.stopPropagation());
   });
@@ -188,6 +199,13 @@ body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--font);overf
       comp.threshold.value = -16; comp.knee.value = 10; comp.ratio.value = 4; comp.attack.value = 0.003; comp.release.value = 0.2;
       master = ac.createGain(); master.gain.value = 0.55;
       master.connect(comp); comp.connect(ac.destination);
+      // small hall: generated impulse response, sent from every instrument
+      const ir = ac.createBuffer(2, Math.floor(ac.sampleRate * 2.2), ac.sampleRate);
+      for (let ch = 0; ch < 2; ch++) { const d = ir.getChannelData(ch);
+        for (let i = 0; i < d.length; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / d.length, 2.6) * (i < 200 ? i / 200 : 1); }
+      const verb = ac.createConvolver(); verb.buffer = ir;
+      const wet = ac.createGain(); wet.gain.value = 0.16;
+      master.connect(verb); verb.connect(wet); wet.connect(comp);
       noiseBuf = ac.createBuffer(1, Math.floor(ac.sampleRate * 0.06), ac.sampleRate);
       const d = noiseBuf.getChannelData(0);
       for (let i = 0; i < d.length; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / d.length, 3);
@@ -198,13 +216,111 @@ body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--font);overf
       const hs = ac.createBiquadFilter(); hs.type = 'highshelf'; hs.frequency.value = 6000; hs.gain.value = -7;
       guitarBus = ac.createGain(); guitarBus.gain.value = 0.9;
       guitarBus.connect(b1); b1.connect(b2); b2.connect(b3); b3.connect(b4); b4.connect(hs); hs.connect(master);
+      buildSustained(pk);
     }
     if (ac.state !== 'running') ac.resume().catch(() => {});
+  }
+  function hold(param, t) {
+    if (param.cancelAndHoldAtTime) param.cancelAndHoldAtTime(t);
+    else { const v = param.value; param.cancelScheduledValues(t); param.setValueAtTime(v, t); }
   }
   function damp(tc) {
     if (!ac) return;
     const t = ac.currentTime;
-    for (const v of voices) if (!v.damped) { v.damped = true; v.out.gain.cancelScheduledValues(t); v.out.gain.setTargetAtTime(0, t, tc); }
+    for (const v of voices) if (!v.damped) { v.damped = true; hold(v.out.gain, t); v.out.gain.setTargetAtTime(0, t, tc); }
+  }
+
+  // ---------- sustained instruments: violin, trumpet, saxophone ----------
+  // A shaped harmonic wavetable per instrument, a brightness filter that opens on each attack,
+  // delayed vibrato, breath/bow noise, and a fixed body/bell EQ on the instrument's bus.
+  const SUS = {
+    violin: { amps: n => 1 / n * (n % 2 ? 1 : 0.86), N: 40, attack: 0.13, release: 0.32, sus: 0.85, level: 0.30,
+      vib: { rate: 5.8, depth: 17, delay: 0.22 }, glide: 0.035, reart: 0.72,
+      bright: { start: 1.6, f: 7, add: 1200, tc: 0.09 }, scoop: 1, noise: 0.045, noiseQ: 0.6, noiseAt: 3200,
+      eq: [['highpass', 190, 0, 0.7], ['peaking', 290, 4, 1.3], ['peaking', 520, -2, 1.2], ['peaking', 2900, 6, 1.4], ['peaking', 5200, -5, 1.0], ['lowpass', 9500, 0, 0.6]] },
+    trumpet: { amps: n => Math.pow(n, -0.55), N: 32, attack: 0.03, release: 0.11, sus: 0.8, level: 0.24,
+      vib: { rate: 5.2, depth: 6, delay: 0.45 }, glide: 0.014, reart: 0.3,
+      bright: { start: 1.1, f: 4.2, add: 700, tc: 0.045 }, scoop: 0.965, noise: 0.012, noiseQ: 1.2, noiseAt: 1400,
+      eq: [['highpass', 160, 0, 0.7], ['peaking', 1250, 6, 1.1], ['peaking', 2600, 3, 1.4], ['peaking', 400, -3, 1.0], ['lowpass', 8000, 0, 0.7]] },
+    sax: { amps: n => Math.pow(n, -0.8) * (n <= 6 && n % 2 ? 1.25 : 1), N: 32, attack: 0.05, release: 0.17, sus: 0.82, level: 0.26,
+      vib: { rate: 5.3, depth: 13, delay: 0.32 }, glide: 0.028, reart: 0.5,
+      bright: { start: 1.4, f: 4.6, add: 1500, tc: 0.07 }, scoop: 0.985, noise: 0.07, noiseQ: 0.7, noiseAt: 2300,
+      eq: [['highpass', 120, 0, 0.7], ['peaking', 580, 4, 1.1], ['peaking', 1650, 5, 1.0], ['peaking', 3100, -2, 1.2], ['lowpass', 7200, 0, 0.7]] },
+  };
+  const isSus = () => !!SUS[tone];
+  let loopNoise = null;
+  function buildSustained() {
+    const len = ac.sampleRate * 2; loopNoise = ac.createBuffer(1, len, ac.sampleRate);
+    const d = loopNoise.getChannelData(0); for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
+    for (const k in SUS) {
+      const def = SUS[k];
+      const real = new Float32Array(def.N + 1), imag = new Float32Array(def.N + 1);
+      for (let n = 1; n <= def.N; n++) imag[n] = def.amps(n);
+      def.wave = ac.createPeriodicWave(real, imag);
+      def.bus = ac.createGain(); def.bus.gain.value = 1;
+      let node = def.bus;
+      for (const [type, fr, gain, q] of def.eq) { const b = ac.createBiquadFilter(); b.type = type; b.frequency.value = fr; b.gain.value = gain; b.Q.value = q; node.connect(b); node = b; }
+      node.connect(master);
+    }
+  }
+  const mf = m => 440 * Math.pow(2, (m - 69) / 12);
+  function susVoice(midi, vel, t, detune = 0) {
+    const def = SUS[tone], f = mf(midi), L = vel * def.level;
+    const osc = ac.createOscillator(); osc.setPeriodicWave(def.wave); osc.detune.value = detune;
+    osc.frequency.setValueAtTime(f * def.scoop, t); osc.frequency.setTargetAtTime(f, t, 0.025);
+    const lfo = ac.createOscillator(); lfo.frequency.value = def.vib.rate * (0.94 + Math.random() * 0.12);
+    const lfoG = ac.createGain(); lfoG.gain.setValueAtTime(0, t); lfoG.gain.setTargetAtTime(def.vib.depth, t + def.vib.delay, 0.25);
+    lfo.connect(lfoG); lfoG.connect(osc.detune);
+    const lp = ac.createBiquadFilter(); lp.type = 'lowpass'; lp.Q.value = 0.8;
+    const open = (tt, ff) => { hold(lp.frequency, tt); lp.frequency.setValueAtTime(Math.min(16000, ff * def.bright.start), tt);
+      lp.frequency.setTargetAtTime(Math.min(16000, ff * def.bright.f + def.bright.add), tt, def.bright.tc); };
+    open(t, f);
+    const amp = ac.createGain();
+    amp.gain.setValueAtTime(0, t); amp.gain.linearRampToValueAtTime(L, t + def.attack);
+    amp.gain.setTargetAtTime(L * def.sus, t + def.attack, 0.25);
+    amp.gain.setTargetAtTime(L * def.sus * 0.6, t + 2, 5); // a long held note settles back, like a player easing off
+    osc.connect(lp); lp.connect(amp); amp.connect(def.bus);
+    const nz = ac.createBufferSource(); nz.buffer = loopNoise; nz.loop = true; nz.loopStart = Math.random();
+    const bp = ac.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = Math.max(def.noiseAt, f * 2); bp.Q.value = def.noiseQ;
+    const ng = ac.createGain(); ng.gain.value = def.noise;
+    nz.connect(bp); bp.connect(ng); ng.connect(amp);
+    osc.start(t); lfo.start(t); nz.start(t, Math.random());
+    let gone = false;
+    const v = {
+      out: amp, damped: false, midi,
+      glide(m2, t2) {
+        const f2 = mf(m2); v.midi = m2;
+        hold(osc.frequency, t2); osc.frequency.setTargetAtTime(f2, t2, def.glide);
+        hold(amp.gain, t2); amp.gain.setTargetAtTime(L * def.reart, t2, 0.012);
+        amp.gain.setTargetAtTime(L * def.sus, t2 + 0.045, 0.07);
+        amp.gain.setTargetAtTime(L * def.sus * 0.6, t2 + 2, 5);
+        hold(lfoG.gain, t2); lfoG.gain.setTargetAtTime(0, t2, 0.03); lfoG.gain.setTargetAtTime(def.vib.depth, t2 + def.vib.delay, 0.25);
+        open(t2, f2); bp.frequency.setTargetAtTime(Math.max(def.noiseAt, f2 * 2), t2, 0.03);
+      },
+      release(t2, tc = def.release) {
+        if (gone) return; gone = true;
+        hold(amp.gain, t2); amp.gain.setTargetAtTime(0, t2, tc / 3);
+        const end = t2 + tc * 2.5 + 0.05;
+        osc.stop(end); lfo.stop(end); nz.stop(end);
+        setTimeout(() => { try { amp.disconnect(); } catch (_) {} const i = voices.indexOf(v); if (i >= 0) voices.splice(i, 1); },
+          (end - ac.currentTime + 0.2) * 1000);
+      },
+    };
+    return v;
+  }
+  // held voices: one lead line (単音) or a section holding a chord (和音)
+  let held = [];
+  function releaseHeld(tc) { if (!ac) return; const t = ac.currentTime; held.forEach(v => v.release(t, tc)); held = []; }
+  function holdNotes(notes) {
+    const t = ac.currentTime + 0.01;
+    if (held.length === notes.length) { held.forEach((v, i) => { if (v.midi !== notes[i]) v.glide(notes[i], t + i * 0.012); }); return; }
+    releaseHeld();
+    const sect = notes.length > 1;
+    held = notes.map((m, i) => susVoice(m, sect ? 0.55 : 0.85, t + i * 0.01, sect ? (i - 1.5) * 4 : 0));
+  }
+  function susShort(midi, vel, t, len) {
+    const v = susVoice(midi, vel, t);
+    voices.push(v); v.release(t + len, SUS[tone].release * 0.8);
   }
   // ---------- acoustic guitar voice (Karplus–Strong plucked string, rendered once per note) ----------
   let guitarBus = null;
@@ -267,6 +383,7 @@ body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--font);overf
   function strike(midi, vel = 0.8, o = {}) {
     if (!ac || muted || ac.state !== 'running') return;
     if (tone === 'guitar') return pluck(midi, vel, o);
+    if (isSus()) return susShort(midi, vel, o.t != null ? o.t : ac.currentTime + 0.005, o.len || 0.5);
     const t = o.t != null ? o.t : ac.currentTime + 0.005;
     if (!o.noDamp) damp(0.22); // the previous key is released, like lifting a finger
     const f = 440 * Math.pow(2, (midi - 69) / 12);
@@ -332,7 +449,12 @@ body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--font);overf
   function voicing(c) {
     const [r, th, fi] = c.tones;
     // six strings' worth: low root, fifth, root, third, fifth, high root
-    return (tone === 'guitar' ? [r - 12, fi - 12, r, th, fi, r + 12] : [r - 12, r, th, fi, r + 12]).map(clampM);
+    return (tone === 'piano' ? [r - 12, r, th, fi, r + 12] : [r - 12, fi - 12, r, th, fi, r + 12]).map(clampM);
+  }
+  // a held section chord: close four-part voicing (saxes sit lower, like a sax section)
+  function heldVoicing(c) {
+    const [r, th, fi] = c.tones;
+    return (tone === 'sax' ? [r - 12, r, th, fi] : [r, th, fi, r + 12]).map(clampM);
   }
   function chordName(c) {
     const pc = c.root % 12;
@@ -358,7 +480,7 @@ body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--font);overf
     while (arpNext < ahead) {
       const notes = voicing(chord()), k = ARP[arpStep % ARP.length];
       const m = notes[Math.min(k, notes.length - 1)];
-      strike(m, arpStep % ARP.length === 0 ? 0.8 : 0.6, { t: arpNext, noDamp: true });
+      strike(m, arpStep % ARP.length === 0 ? 0.8 : 0.6, { t: arpNext, noDamp: true, len: stepDur * 0.85 });
       lit.push({ midi: m, t: arpNext }); if (lit.length > 16) lit.shift();
       arpStep++; arpNext += stepDur;
     }
@@ -366,6 +488,11 @@ body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--font);overf
   setInterval(arpTick, 25);
   function onNote() {
     if (!running) return;
+    if (isSus() && play !== 'arp') {
+      if (!ac || muted || ac.state !== 'running') return;
+      const notes = play === 'single' ? [curMidi] : heldVoicing(chord());
+      holdNotes(notes); sounding = new Set(notes); return;
+    }
     if (play === 'single') { strike(curMidi, 0.8); sounding = new Set([curMidi]); }
     else if (play === 'chord') playChord();
     else { arpRestart(); sounding = new Set(voicing(chord())); arpTick(); }
