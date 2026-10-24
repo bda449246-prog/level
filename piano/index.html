@@ -1,0 +1,444 @@
+<!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-status-bar-style" content="black"><style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);box-sizing:border-box;height:100%}[hidden]{display:none!important}</style></head><body>
+<title>水準器ピアノ</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<style>
+/* Layout: the iOS 計測 > 水準器 screen, plus a scrolling piano strip at the bottom of the stage and a compact settings row on top. Single dark look by design. */
+:root{
+  --bg:#000; --fg:#fff; --level:#34c759; --ref:#ff3b30; --key:#ffd60a;
+  --bar:#121214; --bar-line:#2c2c2e; --muted:#8e8e93; --pill:rgba(44,44,46,.92); --seg-on:#636366;
+  --font:-apple-system,BlinkMacSystemFont,"SF Pro Display","Hiragino Sans","Hiragino Kaku Gothic ProN","Helvetica Neue",Arial,sans-serif;
+  color-scheme:dark;
+}
+html,body{height:100%}
+body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--font);overflow:hidden;
+  -webkit-user-select:none;user-select:none;-webkit-tap-highlight-color:transparent;-webkit-touch-callout:none}
+#app{position:relative;height:100%;display:flex;flex-direction:column}
+#stage{position:relative;flex:1;min-height:0;overflow:hidden;touch-action:none;cursor:pointer}
+#cv{position:absolute;inset:0;width:100%;height:100%;display:block}
+
+#top{position:absolute;top:10px;left:max(16px,env(safe-area-inset-left,0px));right:max(16px,env(safe-area-inset-right,0px));
+  display:flex;flex-direction:column;align-items:center;gap:8px;pointer-events:none}
+#controls{display:flex;flex-wrap:wrap;gap:8px;justify-content:center;align-items:center}
+.seg{display:inline-flex;background:var(--pill);border-radius:9px;padding:2px;pointer-events:auto}
+.seg button,#mute{appearance:none;border:0;background:transparent;color:var(--fg);font:500 13px var(--font);padding:6px 10px;border-radius:7px;cursor:pointer}
+.seg button[aria-pressed="true"]{background:var(--seg-on)}
+#mute{background:var(--pill);border-radius:9px;padding:6px 9px;display:inline-flex;align-items:center;pointer-events:auto}
+#mute svg{width:18px;height:18px}
+#mute[aria-pressed="true"]{color:var(--ref)}
+.seg button:focus-visible,#mute:focus-visible,#gate:focus-visible,.tab:focus-visible{outline:2px solid var(--level);outline-offset:2px}
+#demo{background:var(--pill);color:var(--fg);font-size:12.5px;line-height:1.4;padding:7px 12px;border-radius:14px;text-align:center;max-width:34em}
+
+#hint{position:absolute;left:0;right:0;bottom:120px;text-align:center;font-size:13px;color:var(--fg);opacity:.8;
+  padding-inline:16px;transition:opacity .6s;pointer-events:none}
+#hint.gone{opacity:0}
+
+#gate{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;
+  background:rgba(0,0,0,.74);cursor:pointer;padding-inline:max(16px,env(safe-area-inset-left,0px));text-align:center}
+#gate p{margin:0;font-size:15px;line-height:1.6;color:#d1d1d6;max-width:22em;text-wrap:balance}
+#start{display:inline-block;background:var(--fg);color:#000;font:600 17px var(--font);padding:13px 34px;border-radius:999px}
+
+#tabs{flex:none;display:flex;justify-content:space-around;background:var(--bar);border-top:.5px solid var(--bar-line);
+  padding-top:6px;padding-bottom:6px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+.tab{appearance:none;border:0;background:none;color:var(--muted);display:flex;flex-direction:column;align-items:center;gap:3px;
+  font:500 10.5px var(--font);padding:2px 22px;cursor:pointer;text-decoration:none}
+.tab svg{width:28px;height:24px}
+.tab[aria-current="page"]{color:var(--fg)}
+@media (prefers-reduced-motion:reduce){#hint{transition:none}}
+</style>
+
+<div id="app">
+  <div id="stage" aria-label="水準器ピアノ。傾けると角度に合わせた音が鳴ります。タップで現在の角度を基準にします">
+    <canvas id="cv"></canvas>
+    <div id="top">
+      <div id="controls">
+        <div class="seg" role="group" aria-label="音階">
+          <button id="scWhite" type="button" aria-pressed="true">ドレミ</button>
+          <button id="scChrom" type="button" aria-pressed="false">半音</button>
+        </div>
+        <div class="seg" role="group" aria-label="1音あたりの角度">
+          <button type="button" data-step="0.5" aria-pressed="false">0.5°</button>
+          <button type="button" data-step="1" aria-pressed="false">1°</button>
+          <button type="button" data-step="2" aria-pressed="true">2°</button>
+          <button type="button" data-step="5" aria-pressed="false">5°</button>
+        </div>
+        <button id="mute" type="button" aria-pressed="false" aria-label="消音">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z" fill="currentColor"/>
+            <path id="waves" d="M15.5 9a4 4 0 0 1 0 6M18 6.5a7.5 7.5 0 0 1 0 11"/>
+            <path id="xmark" d="M16 9.5l5 5M21 9.5l-5 5" style="display:none"/>
+          </svg>
+        </button>
+      </div>
+      <div id="demo" hidden>モーションセンサーを使えない環境です。画面をドラッグすると傾きを再現できます。</div>
+    </div>
+    <div id="hint">傾けると角度に合わせて音が鳴ります。タップで今の角度を「ド」にします</div>
+    <div id="gate" role="button" tabindex="0" aria-label="タップして開始">
+      <p>画面をタップすると水準器ピアノが動き出します。<br>モーションへのアクセスを聞かれたら「許可」を選んでください。<br>音が出ないときは消音モードを解除してください。</p>
+      <span id="start">タップして開始</span>
+    </div>
+  </div>
+  <nav id="tabs">
+    <a class="tab" id="tabLevel" href="../">
+      <svg viewBox="0 0 28 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true">
+        <rect x="2" y="7.5" width="24" height="9" rx="4.5"/>
+        <circle cx="14" cy="12" r="2.6" fill="currentColor" stroke="none"/>
+        <path d="M9.5 8v8M18.5 8v8"/>
+      </svg>水準器</a>
+    <button class="tab" id="tabPiano" type="button" aria-current="page">
+      <svg viewBox="0 0 28 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" aria-hidden="true">
+        <rect x="2.5" y="4" width="23" height="16" rx="2"/>
+        <path d="M8.2 4v16M14 4v16M19.8 4v16"/>
+        <path d="M6.6 4h3.2v9H6.6zM12.4 4h3.2v9h-3.2zM18.2 4h3.2v9h-3.2z" fill="currentColor"/>
+      </svg>ピアノ</button>
+  </nav>
+</div>
+
+<script>
+(() => {
+  const D2R = Math.PI / 180, R2D = 180 / Math.PI;
+  const stage = document.getElementById('stage');
+  const cv = document.getElementById('cv'), ctx = cv.getContext('2d');
+  const gate = document.getElementById('gate'), demoEl = document.getElementById('demo');
+  const hint = document.getElementById('hint');
+  const css = getComputedStyle(document.documentElement);
+  const tok = (n, d) => css.getPropertyValue(n).trim() || d;
+  const C = { bg: tok('--bg', '#000'), fg: '#fff', ink: '#000', level: tok('--level', '#34c759'),
+              ref: tok('--ref', '#ff3b30'), key: tok('--key', '#ffd60a') };
+  const FONT = tok('--font', 'sans-serif');
+
+  // In the Claude viewer the tab link to the plain level has nowhere to go.
+  if (location.protocol !== 'https:' || !/github\.io$/.test(location.hostname)) {
+    const t = document.getElementById('tabLevel'); t.removeAttribute('href'); t.style.cursor = 'default';
+  }
+
+  let W = 0, H = 0, DPR = 1;
+  function resize() {
+    const r = stage.getBoundingClientRect();
+    DPR = Math.min(window.devicePixelRatio || 1, 3); W = r.width; H = r.height;
+    cv.width = Math.round(W * DPR); cv.height = Math.round(H * DPR);
+  }
+  new ResizeObserver(resize).observe(stage); resize();
+
+  // ---------- settings ----------
+  const store = { get(k, d) { try { const v = localStorage.getItem('lvp.' + k); return v == null ? d : v; } catch (_) { return d; } },
+                  set(k, v) { try { localStorage.setItem('lvp.' + k, v); } catch (_) {} } };
+  let scale = store.get('scale', 'white');
+  let STEP = parseFloat(store.get('step', '2')) || 2;
+  let muted = store.get('muted', '0') === '1';
+  const scWhite = document.getElementById('scWhite'), scChrom = document.getElementById('scChrom');
+  const stepBtns = [...document.querySelectorAll('[data-step]')];
+  const muteBtn = document.getElementById('mute');
+  function syncUI() {
+    scWhite.setAttribute('aria-pressed', scale === 'white'); scChrom.setAttribute('aria-pressed', scale === 'chrom');
+    stepBtns.forEach(b => b.setAttribute('aria-pressed', parseFloat(b.dataset.step) === STEP));
+    muteBtn.setAttribute('aria-pressed', muted); muteBtn.setAttribute('aria-label', muted ? '消音を解除' : '消音');
+    document.getElementById('waves').style.display = muted ? 'none' : '';
+    document.getElementById('xmark').style.display = muted ? '' : 'none';
+  }
+  syncUI();
+  scWhite.addEventListener('click', () => { scale = 'white'; store.set('scale', scale); syncUI(); });
+  scChrom.addEventListener('click', () => { scale = 'chrom'; store.set('scale', scale); syncUI(); });
+  stepBtns.forEach(b => b.addEventListener('click', () => { STEP = parseFloat(b.dataset.step); store.set('step', STEP); syncUI(); }));
+  muteBtn.addEventListener('click', () => { muted = !muted; store.set('muted', muted ? '1' : '0'); syncUI();
+    initAudio(); if (muted) damp(0.03); else strike(curMidi, 0.7); });
+  document.querySelectorAll('#controls button').forEach(b => {
+    b.addEventListener('pointerdown', e => e.stopPropagation());
+    b.addEventListener('pointerup', e => e.stopPropagation());
+  });
+
+  // ---------- piano voice (Web Audio additive synth) ----------
+  let ac = null, master = null, noiseBuf = null;
+  const voices = [];
+  function initAudio() {
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return;
+    if (!ac) {
+      try { if (navigator.audioSession) navigator.audioSession.type = 'playback'; } catch (_) {}
+      ac = new AC();
+      const comp = ac.createDynamicsCompressor();
+      comp.threshold.value = -16; comp.knee.value = 10; comp.ratio.value = 4; comp.attack.value = 0.003; comp.release.value = 0.2;
+      master = ac.createGain(); master.gain.value = 0.55;
+      master.connect(comp); comp.connect(ac.destination);
+      noiseBuf = ac.createBuffer(1, Math.floor(ac.sampleRate * 0.06), ac.sampleRate);
+      const d = noiseBuf.getChannelData(0);
+      for (let i = 0; i < d.length; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / d.length, 3);
+      const s = ac.createBufferSource(); s.buffer = ac.createBuffer(1, 1, 22050); s.connect(ac.destination); s.start(0);
+    }
+    if (ac.state !== 'running') ac.resume().catch(() => {});
+  }
+  function damp(tc) {
+    if (!ac) return;
+    const t = ac.currentTime;
+    for (const v of voices) if (!v.damped) { v.damped = true; v.out.gain.cancelScheduledValues(t); v.out.gain.setTargetAtTime(0, t, tc); }
+  }
+  function strike(midi, vel = 0.8) {
+    if (!ac || muted || ac.state !== 'running') return;
+    const t = ac.currentTime + 0.005;
+    damp(0.22); // the previous key is released, like lifting a finger
+    const f = 440 * Math.pow(2, (midi - 69) / 12);
+    const out = ac.createGain(); out.gain.value = 1;
+    const lp = ac.createBiquadFilter(); lp.type = 'lowpass'; lp.Q.value = 0.4;
+    lp.frequency.setValueAtTime(Math.min(16000, f * 14 + 2500), t);
+    lp.frequency.setTargetAtTime(Math.min(9000, f * 4 + 900), t + 0.02, 0.5);
+    out.connect(lp); lp.connect(master);
+    const dur = Math.max(1.4, Math.min(7, 7 - (midi - 21) * 0.065));
+    const B = 0.00035 * Math.pow(2, (midi - 60) / 20);
+    const amps = [1, 0.55, 0.32, 0.2, 0.13, 0.085, 0.055, 0.035, 0.022];
+    const lvl = vel * 0.3 * (midi > 88 ? 0.75 : midi < 40 ? 1.15 : 1);
+    const oscs = [];
+    amps.forEach((a, i) => {
+      const k = i + 1, fk = f * k * Math.sqrt(1 + B * k * k);
+      if (fk > 15000) return;
+      const o = ac.createOscillator(); o.type = 'sine'; o.frequency.value = fk;
+      o.detune.value = (Math.random() - 0.5) * (k === 1 ? 3 : 6);
+      const g = ac.createGain(), peak = a * lvl, d = dur / (1 + i * 0.7);
+      g.gain.setValueAtTime(0, t);
+      g.gain.linearRampToValueAtTime(peak, t + 0.003);
+      g.gain.setTargetAtTime(peak * 0.38, t + 0.003, 0.06 + 0.1 / k);
+      g.gain.setTargetAtTime(0.00001, t + 0.15, d / 4.5);
+      o.connect(g); g.connect(out); o.start(t); o.stop(t + dur + 0.3); oscs.push(o);
+    });
+    // hammer
+    const n = ac.createBufferSource(); n.buffer = noiseBuf;
+    const bp = ac.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = Math.min(6000, f * 3 + 400); bp.Q.value = 0.9;
+    const ng = ac.createGain(); ng.gain.value = 0.12 * vel;
+    n.connect(bp); bp.connect(ng); ng.connect(out); n.start(t);
+    const v = { out, damped: false };
+    voices.push(v);
+    setTimeout(() => { try { out.disconnect(); } catch (_) {} const i = voices.indexOf(v); if (i >= 0) voices.splice(i, 1); }, (dur + 0.6) * 1000);
+    while (voices.length > 12) { const old = voices.shift(); try { old.out.disconnect(); } catch (_) {} }
+  }
+
+  // ---------- notes ----------
+  const JP = ['ド', 'ド♯', 'レ', 'レ♯', 'ミ', 'ファ', 'ファ♯', 'ソ', 'ソ♯', 'ラ', 'ラ♯', 'シ'];
+  const EN = ['C', 'C♯', 'D', 'D♯', 'E', 'F', 'F♯', 'G', 'G♯', 'A', 'A♯', 'B'];
+  const WHITE = [0, 2, 4, 5, 7, 9, 11];
+  const isBlack = m => [1, 3, 6, 8, 10].includes(((m % 12) + 12) % 12);
+  function toMidi(n) {
+    let m;
+    if (scale === 'white') { const o = Math.floor(n / 7), i = ((n % 7) + 7) % 7; m = 60 + 12 * o + WHITE[i]; }
+    else m = 60 + n;
+    return Math.max(21, Math.min(108, m));
+  }
+  const nameOf = m => ({ jp: JP[m % 12], en: EN[m % 12] + (Math.floor(m / 12) - 1) });
+  const whiteIdx = {}; { let w = 0; for (let m = 21; m <= 108; m++) if (!isBlack(m)) whiteIdx[m] = w++; }
+  const WHITE_COUNT = 52;
+
+  // ---------- sensor state ----------
+  let raw = null, g = [0.04, -0.03, -1], source = 'demo', lastOrient = null, vote = -4, alive = false, running = false;
+  const norm = v => { const n = Math.hypot(v[0], v[1], v[2]) || 1; return [v[0] / n, v[1] / n, v[2] / n]; };
+  const orientDown = (b, gm) => { const B = b * D2R, G = gm * D2R;
+    return [Math.sin(G) * Math.cos(B), -Math.sin(B), -Math.cos(B) * Math.cos(G)]; };
+  function onOrient(e) {
+    if (e.beta == null || e.gamma == null) return;
+    lastOrient = orientDown(e.beta, e.gamma); alive = true;
+    if (source !== 'motion') { raw = lastOrient; source = 'orient'; }
+  }
+  function onMotion(e) {
+    const a = e.accelerationIncludingGravity;
+    if (!a || a.x == null || a.y == null || a.z == null) return;
+    const n = Math.hypot(a.x, a.y, a.z); if (n < 2) return;
+    const v = [a.x / n, a.y / n, a.z / n];
+    if (lastOrient) { const d = v[1] * lastOrient[1] + v[2] * lastOrient[2];
+      if (Math.abs(d) > 0.3) vote = Math.max(-40, Math.min(40, vote + (d > 0 ? 1 : -1))); }
+    const s = vote >= 0 ? 1 : -1;
+    raw = [v[0] * s, v[1] * s, v[2] * s]; source = 'motion'; alive = true;
+  }
+
+  async function start() {
+    if (start.busy) return; start.busy = true;
+    gate.hidden = true;
+    const asks = [];
+    if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function')
+      asks.push(DeviceMotionEvent.requestPermission().catch(() => 'denied'));
+    if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function')
+      asks.push(DeviceOrientationEvent.requestPermission().catch(() => 'denied'));
+    initAudio();
+    window.addEventListener('deviceorientation', onOrient);
+    window.addEventListener('devicemotion', onMotion);
+    try { if (navigator.wakeLock) navigator.wakeLock.request('screen').catch(() => {}); } catch (_) {}
+    running = true;
+    setTimeout(() => strike(curMidi, 0.75), 250);
+    const res = await Promise.all(asks);
+    const ok = res.some(r => r === 'granted') || asks.length === 0;
+    setTimeout(() => { if (!alive) enterDemo(ok
+      ? 'センサーの値が届きませんでした。HTTPSのページをSafariで開いてください。画面をドラッグすると傾きを再現できます。'
+      : 'この画面ではモーションセンサーの利用が許可されませんでした。画面をドラッグすると傾きを再現できます。'); }, ok ? 1500 : 0);
+    setTimeout(() => hint.classList.add('gone'), 6000);
+  }
+  gate.addEventListener('click', start);
+  gate.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); start(); } });
+  document.addEventListener('visibilitychange', () => { if (!document.hidden && running) initAudio(); });
+
+  // ---------- demo (drag to tilt) ----------
+  let simX = 3.4, simY = -1.2, demoBase = 'flat';
+  const K = 0.05;
+  function simVector() {
+    if (demoBase === 'flat') return norm([Math.sin(simX * D2R), Math.sin(simY * D2R), -1]);
+    const r = simX * D2R; return norm([Math.sin(r), -Math.cos(r), -Math.sin(simY * D2R) * 0.6]);
+  }
+  function enterDemo(msg) { if (msg) demoEl.textContent = msg; source = 'demo'; demoEl.hidden = false; }
+
+  let ptr = null;
+  stage.addEventListener('pointerdown', e => {
+    if (!gate.hidden) return;
+    initAudio();
+    ptr = { x: e.clientX, y: e.clientY, sx: simX, sy: simY, moved: false };
+    stage.setPointerCapture(e.pointerId);
+  });
+  stage.addEventListener('pointermove', e => {
+    if (!ptr) return;
+    const dx = e.clientX - ptr.x, dy = e.clientY - ptr.y;
+    if (!ptr.moved && Math.hypot(dx, dy) > 6) ptr.moved = true;
+    if (ptr.moved && source === 'demo') { simX = ptr.sx + dx * K; simY = ptr.sy - dy * K; }
+  });
+  stage.addEventListener('pointerup', () => { if (ptr && !ptr.moved) toggleRef(); ptr = null; });
+  stage.addEventListener('pointercancel', () => { ptr = null; });
+
+  // ---------- level logic ----------
+  let mode = 'flat', refVec = null, refRoll = null, isLevel = false, shown = 0, shownAt = 0;
+  let cur = { x: 0, y: 0, z: -1, roll: 0 };
+  let noteN = 0, curMidi = 60, kbCenter = whiteIdx[60] + 0.5, flash = 0;
+
+  function screenAngle() {
+    const a = (screen.orientation && typeof screen.orientation.angle === 'number') ? screen.orientation.angle
+            : (typeof window.orientation === 'number' ? window.orientation : 0);
+    return a * D2R;
+  }
+  function toScreen(v) { const a = screenAngle(), c = Math.cos(a), s = Math.sin(a);
+    return [v[0] * c - v[1] * s, v[0] * s + v[1] * c, v[2]]; }
+  const wrap180 = d => ((d + 180) % 360 + 360) % 360 - 180;
+  const wrap45 = d => ((d + 45) % 90 + 90) % 90 - 45;
+  function clearRef() { refVec = null; refRoll = null; }
+  function toggleRef() {
+    if (refVec || refRoll != null) { clearRef(); return; }
+    if (mode === 'flat') refVec = [cur.x, cur.y, cur.z]; else refRoll = cur.roll;
+  }
+
+  // ---------- drawing ----------
+  function fmt(v) { let s = (Math.round(v * 10) / 10).toFixed(1); if (s === '-0.0') s = '0.0'; return s + '°'; }
+  function labels(color, cx, cy, size, text, nm) {
+    ctx.fillStyle = color; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.font = `200 ${size}px ${FONT}`;
+    const degW = ctx.measureText('°').width;
+    ctx.fillText(text, cx + degW / 2, cy);
+    const s2 = size * 0.36;
+    ctx.font = `500 ${s2}px ${FONT}`;
+    const jpW = ctx.measureText(nm.jp).width;
+    ctx.font = `400 ${s2 * 0.62}px ${FONT}`;
+    const enW = ctx.measureText(nm.en).width, gap = s2 * 0.3, total = jpW + gap + enW;
+    const y = cy - size * 0.78, x0 = cx - total / 2;
+    ctx.textAlign = 'left';
+    ctx.font = `500 ${s2}px ${FONT}`; ctx.fillText(nm.jp, x0, y);
+    ctx.font = `400 ${s2 * 0.62}px ${FONT}`; ctx.fillText(nm.en, x0 + jpW + gap, y + s2 * 0.08);
+  }
+  function rrect(x, y, w, h, r) {
+    ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + w, y); ctx.lineTo(x + w, y + h - r);
+    ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h); ctx.lineTo(x + r, y + h);
+    ctx.quadraticCurveTo(x, y + h, x, y + h - r); ctx.closePath();
+  }
+  function keyboard(kbY, kbH, dt) {
+    const target = isBlack(curMidi) ? whiteIdx[curMidi - 1] + 1 : whiteIdx[curMidi] + 0.5;
+    kbCenter += (target - kbCenter) * (1 - Math.exp(-dt / 0.12));
+    const N = W < 520 ? 15 : 22, kw = W / N;
+    const xOf = i => W / 2 + (i - kbCenter) * kw;
+    ctx.fillStyle = '#0b0b0c'; ctx.fillRect(0, kbY - 6, W, kbH + 12);
+    const lo = Math.max(0, Math.floor(kbCenter - N / 2 - 1)), hi = Math.min(WHITE_COUNT - 1, Math.ceil(kbCenter + N / 2 + 1));
+    const hl = flash > 0 ? C.key : C.key;
+    ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic';
+    for (let m = 21; m <= 108; m++) {
+      if (isBlack(m)) continue; const i = whiteIdx[m]; if (i < lo || i > hi) continue;
+      const x = xOf(i);
+      rrect(x + 0.75, kbY, kw - 1.5, kbH, Math.min(4, kw * 0.15));
+      ctx.fillStyle = m === curMidi ? hl : '#f2f2f7'; ctx.fill();
+      if (m % 12 === 0) { ctx.fillStyle = '#8e8e93'; ctx.font = `500 ${Math.max(9, Math.min(11, kw * 0.36))}px ${FONT}`;
+        ctx.fillText('C' + (m / 12 - 1), x + kw / 2, kbY + kbH - 6); }
+    }
+    for (let m = 22; m <= 107; m++) {
+      if (!isBlack(m)) continue; const i = whiteIdx[m - 1] + 1; if (i < lo || i > hi + 1) continue;
+      const bw = kw * 0.58, x = xOf(i) - bw / 2;
+      rrect(x, kbY, bw, kbH * 0.6, Math.min(3, bw * 0.15));
+      ctx.fillStyle = m === curMidi ? hl : '#1c1c1e'; ctx.fill();
+    }
+  }
+
+  let last = performance.now();
+  function frame(t) {
+    const dt = Math.min(0.1, (t - last) / 1000); last = t;
+    const target = source === 'demo' ? simVector() : raw;
+    if (target) {
+      const a = 1 - Math.exp(-dt / (source === 'demo' ? 0.05 : 0.12));
+      g = norm([g[0] + (target[0] - g[0]) * a, g[1] + (target[1] - g[1]) * a, g[2] + (target[2] - g[2]) * a]);
+    }
+    const [x, y, z] = toScreen(g);
+    const tilt = Math.acos(Math.min(1, Math.abs(z))) * R2D;
+    if (mode === 'flat' && tilt > 50) { mode = 'up'; clearRef(); }
+    else if (mode === 'up' && tilt < 40) { mode = 'flat'; clearRef(); }
+    const roll = Math.atan2(-y, x) * R2D - 90;
+    cur = { x, y, z, roll };
+
+    let value, dir = [0, 0];
+    if (mode === 'flat') {
+      if (refVec) { const d = Math.max(-1, Math.min(1, x * refVec[0] + y * refVec[1] + z * refVec[2]));
+        value = Math.acos(d) * R2D; dir = [x - refVec[0], y - refVec[1]]; }
+      else { value = tilt; dir = [x, y]; }
+    } else {
+      value = -(refRoll != null ? wrap180(roll - refRoll) : wrap45(roll));
+    }
+
+    // angle → note, with hysteresis so a steady hand doesn't flicker between keys
+    const p = value / STEP;
+    if (Math.abs(p - noteN) > 0.62) noteN = Math.round(p);
+    const midi = toMidi(noteN);
+    if (midi !== curMidi) { curMidi = midi; if (running) strike(midi); flash = 0.15; }
+    flash = Math.max(0, flash - dt);
+
+    if (Math.abs(value - shown) >= 0.06 || t - shownAt > 400) { shown = value; shownAt = t; }
+    const absv = Math.abs(shown);
+    if (!isLevel && absv < 0.05) isLevel = true; else if (isLevel && absv >= 0.15) isLevel = false;
+    const hasRef = !!refVec || refRoll != null;
+    const bg = isLevel ? C.level : (hasRef ? C.ref : C.bg);
+    const text = fmt(mode === 'flat' ? absv : shown);
+    const nm = nameOf(curMidi);
+
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    const kbH = Math.max(70, Math.min(110, H * 0.15)), kbY = H - kbH - 8;
+    hint.style.bottom = (kbH + 26) + 'px';
+    const cx = W / 2, cy = (kbY - 6) / 2 + 14, m = Math.min(W, kbY);
+    ctx.fillStyle = bg; ctx.fillRect(0, 0, W, H);
+
+    if (mode === 'flat') {
+      const R = m * 0.3;
+      const dl = Math.hypot(dir[0], dir[1]);
+      const off = Math.min(value * R * 0.055, R * 1.25);
+      const ux = dl > 1e-6 ? dir[0] / dl : 0, uy = dl > 1e-6 ? -dir[1] / dl : 0;
+      const c1 = [cx + ux * off, cy + uy * off], c2 = [cx - ux * off, cy - uy * off];
+      const circ = c => { ctx.beginPath(); ctx.arc(c[0], c[1], R, 0, Math.PI * 2); };
+      ctx.fillStyle = C.fg; circ(c1); ctx.fill(); circ(c2); ctx.fill();
+      ctx.save(); circ(c1); ctx.clip(); ctx.fillStyle = bg; circ(c2); ctx.fill(); ctx.restore();
+      const size = m * 0.17;
+      labels(C.fg, cx, cy, size, text, nm);
+      ctx.save(); circ(c1); ctx.clip(); labels(C.ink, cx, cy, size, text, nm); ctx.restore();
+      ctx.save(); circ(c2); ctx.clip(); labels(C.ink, cx, cy, size, text, nm); ctx.restore();
+      ctx.save(); circ(c1); ctx.clip(); circ(c2); ctx.clip(); labels(C.fg, cx, cy, size, text, nm); ctx.restore();
+    } else {
+      const phi = Math.atan2(-y, x);
+      const shift = Math.max(-0.45, Math.min(0.45, -z * 0.5)) * H;
+      const ground = () => {
+        ctx.translate(cx, cy); ctx.rotate(phi - Math.PI / 2);
+        ctx.beginPath(); ctx.rect(-3 * W - 3 * H, shift, 6 * W + 6 * H, 3 * W + 3 * H);
+        ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+      };
+      ctx.save(); ground(); ctx.fillStyle = isLevel ? C.level : C.fg; ctx.fill(); ctx.restore();
+      const size = m * 0.2;
+      labels(C.fg, cx, cy, size, text, nm);
+      if (!isLevel) { ctx.save(); ground(); ctx.clip(); labels(C.ink, cx, cy, size, text, nm); ctx.restore(); }
+    }
+    keyboard(kbY, kbH, dt);
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+})();
+</script>
+
+</body></html>
