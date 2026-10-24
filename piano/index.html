@@ -51,6 +51,10 @@ body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--font);overf
     <canvas id="cv"></canvas>
     <div id="top">
       <div id="controls">
+        <div class="seg" role="group" aria-label="音色">
+          <button id="tnPiano" type="button" aria-pressed="false">ピアノ</button>
+          <button id="tnGuitar" type="button" aria-pressed="true">ギター</button>
+        </div>
         <div class="seg" role="group" aria-label="音階">
           <button id="scWhite" type="button" aria-pressed="true">ドレミ</button>
           <button id="scChrom" type="button" aria-pressed="false">半音</button>
@@ -125,10 +129,13 @@ body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--font);overf
   let scale = store.get('scale', 'white');
   let STEP = parseFloat(store.get('step', '2')) || 2;
   let muted = store.get('muted', '0') === '1';
+  let tone = store.get('tone', 'guitar');
+  const tnPiano = document.getElementById('tnPiano'), tnGuitar = document.getElementById('tnGuitar');
   const scWhite = document.getElementById('scWhite'), scChrom = document.getElementById('scChrom');
   const stepBtns = [...document.querySelectorAll('[data-step]')];
   const muteBtn = document.getElementById('mute');
   function syncUI() {
+    tnPiano.setAttribute('aria-pressed', tone === 'piano'); tnGuitar.setAttribute('aria-pressed', tone === 'guitar');
     scWhite.setAttribute('aria-pressed', scale === 'white'); scChrom.setAttribute('aria-pressed', scale === 'chrom');
     stepBtns.forEach(b => b.setAttribute('aria-pressed', parseFloat(b.dataset.step) === STEP));
     muteBtn.setAttribute('aria-pressed', muted); muteBtn.setAttribute('aria-label', muted ? '消音を解除' : '消音');
@@ -136,6 +143,9 @@ body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--font);overf
     document.getElementById('xmark').style.display = muted ? '' : 'none';
   }
   syncUI();
+  const setTone = v => { tone = v; store.set('tone', v); syncUI(); initAudio(); strike(curMidi, 0.75); };
+  tnPiano.addEventListener('click', () => setTone('piano'));
+  tnGuitar.addEventListener('click', () => setTone('guitar'));
   scWhite.addEventListener('click', () => { scale = 'white'; store.set('scale', scale); syncUI(); });
   scChrom.addEventListener('click', () => { scale = 'chrom'; store.set('scale', scale); syncUI(); });
   stepBtns.forEach(b => b.addEventListener('click', () => { STEP = parseFloat(b.dataset.step); store.set('step', STEP); syncUI(); }));
@@ -163,6 +173,12 @@ body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--font);overf
       const d = noiseBuf.getChannelData(0);
       for (let i = 0; i < d.length; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / d.length, 3);
       const s = ac.createBufferSource(); s.buffer = ac.createBuffer(1, 1, 22050); s.connect(ac.destination); s.start(0);
+      // guitar body: low air/top resonances, a scooped mid, softened top end
+      const pk = (fr, gain, q) => { const b = ac.createBiquadFilter(); b.type = 'peaking'; b.frequency.value = fr; b.gain.value = gain; b.Q.value = q; return b; };
+      const b1 = pk(105, 6, 1.4), b2 = pk(210, 4, 1.6), b3 = pk(480, -3, 1.0), b4 = pk(2600, 2.5, 0.9);
+      const hs = ac.createBiquadFilter(); hs.type = 'highshelf'; hs.frequency.value = 6000; hs.gain.value = -7;
+      guitarBus = ac.createGain(); guitarBus.gain.value = 0.9;
+      guitarBus.connect(b1); b1.connect(b2); b2.connect(b3); b3.connect(b4); b4.connect(hs); hs.connect(master);
     }
     if (ac.state !== 'running') ac.resume().catch(() => {});
   }
@@ -171,8 +187,60 @@ body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--font);overf
     const t = ac.currentTime;
     for (const v of voices) if (!v.damped) { v.damped = true; v.out.gain.cancelScheduledValues(t); v.out.gain.setTargetAtTime(0, t, tc); }
   }
+  // ---------- acoustic guitar voice (Karplus–Strong plucked string, rendered once per note) ----------
+  let guitarBus = null;
+  const ksCache = new Map();
+  function ksBuffer(midi) {
+    if (ksCache.has(midi)) { const b = ksCache.get(midi); ksCache.delete(midi); ksCache.set(midi, b); return b; }
+    const sr = ac.sampleRate, f = 440 * Math.pow(2, (midi - 69) / 12);
+    const dur = Math.max(2.5, Math.min(6, 6 - (midi - 40) * 0.06));
+    const len = Math.floor(sr * dur);
+    const buf = ac.createBuffer(1, len, sr), out = buf.getChannelData(0);
+    // two-tap loop filter: lighter on higher strings so they sustain like real steel strings
+    const S = Math.max(0.06, Math.min(0.32, 0.32 - (midi - 40) * 0.0065));
+    const P = sr / f - S, N = Math.max(2, Math.floor(P)), frac = P - N, c = (1 - frac) / (1 + frac);
+    // excitation: pick noise, slightly softened, with a comb notch for pluck position near the bridge
+    const ring = new Float32Array(N), ex = new Float32Array(N);
+    let lp = 0;
+    for (let i = 0; i < N; i++) { lp += 0.62 * ((Math.random() * 2 - 1) - lp); ex[i] = lp; }
+    const pos = Math.max(1, Math.round(N * 0.14));
+    let mean = 0;
+    for (let i = 0; i < N; i++) { ring[i] = ex[i] - 0.85 * ex[(i + pos) % N]; mean += ring[i]; }
+    mean /= N; for (let i = 0; i < N; i++) ring[i] -= mean;
+    const t60 = dur * 1.25, rho = Math.pow(10, -3 / (t60 * f));
+    let idx = 0, apX = 0, apY = 0, prev = 0, peak = 1e-6;
+    for (let n = 0; n < len; n++) {
+      const cur = ring[idx];
+      const v = rho * ((1 - S) * cur + S * prev); prev = cur;
+      const ap = c * v + apX - c * apY; apX = v; apY = ap;
+      out[n] = cur; ring[idx] = ap; idx = idx + 1 === N ? 0 : idx + 1;
+      if (n < sr * 0.2) { const a = Math.abs(cur); if (a > peak) peak = a; }
+    }
+    const fadeN = Math.floor(sr * 0.05);
+    for (let n = 0; n < len; n++) { out[n] /= peak; if (n > len - fadeN) out[n] *= (len - n) / fadeN; }
+    ksCache.set(midi, buf);
+    if (ksCache.size > 24) ksCache.delete(ksCache.keys().next().value);
+    return buf;
+  }
+  function pluck(midi, vel) {
+    const t = ac.currentTime + 0.005;
+    damp(0.3); // let the last string ring briefly, like a player moving to the next fret
+    const src = ac.createBufferSource(); src.buffer = ksBuffer(midi);
+    const tone = ac.createBiquadFilter(); tone.type = 'lowpass'; tone.Q.value = 0.3;
+    const f = 440 * Math.pow(2, (midi - 69) / 12);
+    tone.frequency.setValueAtTime(Math.min(14000, f * 10 + 3000), t);
+    tone.frequency.setTargetAtTime(Math.min(8000, f * 5 + 1500), t + 0.01, 0.35);
+    const out = ac.createGain(); out.gain.value = vel * 0.55 * (midi < 45 ? 1.2 : 1);
+    src.connect(tone); tone.connect(out); out.connect(guitarBus); src.start(t);
+    const v = { out, damped: false };
+    voices.push(v);
+    src.onended = () => { try { out.disconnect(); } catch (_) {} const i = voices.indexOf(v); if (i >= 0) voices.splice(i, 1); };
+    while (voices.length > 12) { const old = voices.shift(); try { old.out.disconnect(); } catch (_) {} }
+  }
+
   function strike(midi, vel = 0.8) {
     if (!ac || muted || ac.state !== 'running') return;
+    if (tone === 'guitar') return pluck(midi, vel);
     const t = ac.currentTime + 0.005;
     damp(0.22); // the previous key is released, like lifting a finger
     const f = 440 * Math.pow(2, (midi - 69) / 12);
