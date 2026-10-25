@@ -1,0 +1,491 @@
+<!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-status-bar-style" content="black"><style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);box-sizing:border-box;height:100%}[hidden]{display:none!important}</style></head><body>
+<title>そそぐ水準器</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<style>
+/* Layout: the iOS level's black stage; angle readout on top, glassware fixed to the screen in the middle, actions and tab bar at the bottom. Single dark look by design. */
+:root{
+  --bg:#000; --fg:#fff; --ok:#34c759; --muted:#8e8e93; --glass:rgba(255,255,255,.82); --glass-fill:rgba(255,255,255,.05);
+  --band:rgba(52,199,89,.22); --pill:rgba(44,44,46,.92); --card:#1c1c1e; --line:#2c2c2e; --bar:#121214; --warn:#ff9f0a;
+  --font:-apple-system,BlinkMacSystemFont,"SF Pro Display","Hiragino Sans","Hiragino Kaku Gothic ProN","Helvetica Neue",Arial,sans-serif;
+  color-scheme:dark;
+}
+html,body{height:100%}
+body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--font);overflow:hidden;
+  -webkit-user-select:none;user-select:none;-webkit-tap-highlight-color:transparent;-webkit-touch-callout:none}
+#app{position:relative;height:100%;display:flex;flex-direction:column}
+#stage{position:relative;flex:1;min-height:0;overflow:hidden;touch-action:none}
+#cv{position:absolute;inset:0;width:100%;height:100%;display:block}
+
+#hud{position:absolute;top:8px;left:max(16px,env(safe-area-inset-left,0px));right:max(16px,env(safe-area-inset-right,0px));
+  display:flex;flex-direction:column;align-items:center;gap:2px;pointer-events:none;text-align:center}
+#stageTitle{display:flex;gap:8px;align-items:baseline;font-size:13px;color:var(--muted)}
+#stNo{font-variant-numeric:tabular-nums;letter-spacing:.06em}
+#stName{color:var(--fg);font-weight:600}
+#angle{font-size:46px;font-weight:200;line-height:1.1;font-variant-numeric:tabular-nums;letter-spacing:-.01em}
+#angle.level{color:var(--ok)}
+#hint{margin:0;font-size:13px;line-height:1.45;color:#d1d1d6;max-width:24em;min-height:2.9em;text-wrap:balance}
+#hint.keep{color:var(--ok);font-weight:600}
+
+#notice{position:absolute;left:50%;bottom:66px;transform:translateX(-50%);background:var(--pill);font-size:12.5px;line-height:1.4;
+  padding:7px 12px;border-radius:14px;text-align:center;width:max-content;max-width:calc(100% - 32px);pointer-events:none}
+#notice.warn{color:var(--warn)}
+
+#actions{position:absolute;bottom:12px;left:max(16px,env(safe-area-inset-left,0px));right:max(16px,env(safe-area-inset-right,0px));
+  display:flex;justify-content:space-between;gap:12px;pointer-events:none}
+.btn{appearance:none;border:0;background:var(--pill);color:var(--fg);font:600 14px var(--font);padding:10px 16px;border-radius:999px;cursor:pointer;pointer-events:auto}
+.btn.primary{background:var(--fg);color:#000}
+.btn:focus-visible,.tab:focus-visible,#gate:focus-visible,.stage-btn:focus-visible{outline:2px solid var(--ok);outline-offset:2px}
+
+.sheet{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.6);
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+.card{background:var(--card);border-radius:20px;padding:22px 20px 18px;width:100%;max-width:340px;display:flex;flex-direction:column;gap:12px;text-align:center}
+.card h2{margin:0;font-size:22px;font-weight:700}
+#stars{font-size:34px;letter-spacing:6px;color:var(--ok)}
+#stars .off{color:#3a3a3c}
+#sheetMsg{margin:0;font-size:14px;line-height:1.6;color:#d1d1d6}
+.row{display:flex;gap:10px;justify-content:center}
+.row .btn{flex:1}
+#grid{display:grid;grid-template-columns:1fr;gap:8px}
+.stage-btn{appearance:none;border:0;background:#2c2c2e;color:var(--fg);border-radius:12px;padding:11px 14px;display:flex;align-items:center;gap:12px;
+  font:500 15px var(--font);cursor:pointer;text-align:left}
+.stage-btn .no{color:var(--muted);font-variant-numeric:tabular-nums;width:1.2em}
+.stage-btn .nm{flex:1;min-width:0}
+.stage-btn .st{color:var(--ok);letter-spacing:2px;font-size:13px}
+.stage-btn .st .off{color:#48484a}
+.stage-btn[aria-current="true"]{box-shadow:inset 0 0 0 1.5px var(--ok)}
+
+#gate{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;
+  background:rgba(0,0,0,.78);cursor:pointer;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));text-align:center}
+#gate h1{margin:0;font-size:28px;font-weight:700;letter-spacing:.02em}
+#gate p{margin:0;font-size:15px;line-height:1.65;color:#d1d1d6;max-width:21em;text-wrap:balance}
+#start{display:inline-block;background:var(--fg);color:#000;font:600 17px var(--font);padding:13px 34px;border-radius:999px}
+
+#tabs{flex:none;display:flex;justify-content:space-around;background:var(--bar);border-top:.5px solid var(--line);
+  padding-top:6px;padding-bottom:6px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+.tab{appearance:none;border:0;background:none;color:var(--muted);display:flex;flex-direction:column;align-items:center;gap:3px;
+  font:500 10.5px var(--font);padding:2px 14px;cursor:pointer;text-decoration:none}
+.tab svg{width:28px;height:24px}
+.tab[aria-current="page"]{color:var(--fg)}
+</style>
+
+<div id="app">
+  <div id="stage">
+    <canvas id="cv"></canvas>
+    <header id="hud">
+      <div id="stageTitle"><span id="stNo">STAGE 1</span><span id="stName"></span></div>
+      <div id="angle" aria-live="off">0.0°</div>
+      <p id="hint"></p>
+    </header>
+    <div id="notice" hidden></div>
+    <div id="actions">
+      <button class="btn" id="btnStages" type="button">ステージ</button>
+      <button class="btn" id="btnReset" type="button">やり直す</button>
+    </div>
+    <div class="sheet" id="sheet" hidden>
+      <div class="card" role="dialog" aria-modal="true" aria-labelledby="sheetTitle">
+        <h2 id="sheetTitle">クリア</h2>
+        <div id="stars" aria-hidden="true"></div>
+        <p id="sheetMsg"></p>
+        <div class="row">
+          <button class="btn" id="sheetRetry" type="button">もう一度</button>
+          <button class="btn primary" id="sheetNext" type="button">次へ</button>
+        </div>
+      </div>
+    </div>
+    <div class="sheet" id="picker" hidden>
+      <div class="card" role="dialog" aria-modal="true" aria-labelledby="pickTitle">
+        <h2 id="pickTitle">ステージ</h2>
+        <div id="grid"></div>
+        <button class="btn" id="pickClose" type="button">閉じる</button>
+      </div>
+    </div>
+    <div id="gate" role="button" tabindex="0" aria-label="タップして開始">
+      <h1>そそぐ水準器</h1>
+      <p>端末を立てて持ち、傾けて水を注ぎます。<br>緑の線の範囲まで入れたらクリア。<br>モーションへのアクセスを聞かれたら「許可」を選んでください。</p>
+      <span id="start">タップして開始</span>
+    </div>
+  </div>
+  <nav id="tabs">
+    <a class="tab nav-out" href="../">
+      <svg viewBox="0 0 28 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true">
+        <rect x="2" y="7.5" width="24" height="9" rx="4.5"/><circle cx="14" cy="12" r="2.6" fill="currentColor" stroke="none"/><path d="M9.5 8v8M18.5 8v8"/>
+      </svg>水準器</a>
+    <a class="tab nav-out" href="../piano/">
+      <svg viewBox="0 0 28 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" aria-hidden="true">
+        <rect x="2.5" y="4" width="23" height="16" rx="2"/><path d="M8.2 4v16M14 4v16M19.8 4v16"/>
+        <path d="M6.6 4h3.2v9H6.6zM12.4 4h3.2v9h-3.2zM18.2 4h3.2v9h-3.2z" fill="currentColor"/>
+      </svg>ピアノ</a>
+    <button class="tab" type="button" aria-current="page">
+      <svg viewBox="0 0 28 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" aria-hidden="true">
+        <path d="M5 5h11l-1.5 15h-8z"/><path d="M16 7.5l4.5-1.5"/><path d="M6.4 13h8.6l-.7 7H7.1z" fill="currentColor" stroke="none"/>
+        <path d="M22 9c0 2-1.4 3-1.4 4.2a1.4 1.4 0 0 0 2.8 0C23.4 12 22 11 22 9z" fill="currentColor" stroke="none"/>
+      </svg>そそぐ</button>
+  </nav>
+</div>
+
+<script>
+// ---------- water physics (design units: 100 × 150, y down) ----------
+const PH = (() => {
+  const G = 320, Q = 2.0, KFLOW = 7, MAXP = 800;
+  const cross = (ax, ay, bx, by) => ax * by - ay * bx;
+  function area(poly) {
+    let a = 0;
+    for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) a += poly[j][0] * poly[i][1] - poly[i][0] * poly[j][1];
+    return Math.abs(a) / 2;
+  }
+  const hgt = (p, d) => -(p[0] * d[0] + p[1] * d[1]);          // height against gravity d
+  function clipBelow(pts, d, L) {                                  // the part of a container at or below height L
+    const out = [];
+    for (let i = 0; i < pts.length; i++) {
+      const a = pts[i], b = pts[(i + 1) % pts.length];
+      const ha = hgt(a, d) - L, hb = hgt(b, d) - L, ina = ha <= 0, inb = hb <= 0;
+      if (ina) out.push(a);
+      if (ina !== inb) { const t = ha / (ha - hb); out.push([a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]); }
+    }
+    return out;
+  }
+  function levelFor(pts, d, V) {                                   // water surface height holding volume V
+    let lo = Infinity, hi = -Infinity;
+    for (const p of pts) { const h = hgt(p, d); if (h < lo) lo = h; if (h > hi) hi = h; }
+    if (V <= 0) return lo;
+    for (let k = 0; k < 28; k++) { const mid = (lo + hi) / 2; if (area(clipBelow(pts, d, mid)) < V) lo = mid; else hi = mid; }
+    return (lo + hi) / 2;
+  }
+  function rim(c, d) { const a = c.pts[c.pts.length - 1], b = c.pts[0]; return hgt(a, d) <= hgt(b, d) ? [a, b] : [b, a]; }
+  function capAt(c, d) { const [lo] = rim(c, d); return area(clipBelow(c.pts, d, hgt(lo, d))); }
+  function make(def) {
+    const c = { pts: def.pts, target: def.target, tol: def.tol };
+    c.capUp = capAt(c, [0, 1]); c.V = (def.fill || 0) * c.capUp;
+    const a = c.pts[c.pts.length - 1], b = c.pts[0]; c.mouthLen = Math.hypot(a[0] - b[0], a[1] - b[1]);
+    c.spilling = false; return c;
+  }
+  function segHit(p, q, a, b) {
+    const rx = q[0] - p[0], ry = q[1] - p[1], sx = b[0] - a[0], sy = b[1] - a[1], den = cross(rx, ry, sx, sy);
+    if (Math.abs(den) < 1e-12) return -1;
+    const px = a[0] - p[0], py = a[1] - p[1], t = cross(px, py, sx, sy) / den, u = cross(px, py, rx, ry) / den;
+    return t >= 0 && t <= 1 && u >= 0 && u <= 1 ? t : -1;
+  }
+  function inside(pt, pts) {
+    let c = false;
+    for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+      const a = pts[i], b = pts[j];
+      if ((a[1] > pt[1]) !== (b[1] > pt[1]) && pt[0] < (b[0] - a[0]) * (pt[1] - a[1]) / (b[1] - a[1]) + a[0]) c = !c;
+    }
+    return c;
+  }
+  function newState(stage) {
+    const cs = stage.cups.map(make);
+    return { cs, parts: [], lost: 0, total: cs.reduce((s, c) => s + c.V, 0), t: 0 };
+  }
+  const water = S => S.cs.reduce((s, c) => s + c.V, 0) + S.parts.reduce((s, p) => s + p.v, 0);
+  function step(S, d, mag, dt) {
+    S.t += dt;
+    const gx = d[0] * G * mag, gy = d[1] * G * mag;
+    S.cs.forEach((c, ci) => {
+      const cap = capAt(c, d); c.spilling = false;
+      if (c.V > cap + 0.05) {
+        let out = (c.V - cap) * (1 - Math.exp(-KFLOW * Math.min(2, c.mouthLen / 18) * dt));
+        out = Math.max(out, Math.min(c.V - cap, 6 * dt));
+        const n = Math.ceil(out / Q);
+        if (S.parts.length + n > MAXP) return;
+        c.V -= out; c.spilling = true;
+        const [lo, hi] = rim(c, d);
+        let ux = lo[0] - hi[0], uy = lo[1] - hi[1]; const ul = Math.hypot(ux, uy) || 1; ux /= ul; uy /= ul;
+        const sp = 3 + Math.min(8, out / dt * 0.06);
+        for (let k = 0; k < n; k++) {
+          const j = Math.random() - 0.5, f = (k + Math.random()) / n;
+          S.parts.push({ x: lo[0] + ux * (0.6 + sp * dt * f), y: lo[1] + uy * (0.6 + sp * dt * f),
+            vx: ux * sp + j * 3, vy: uy * sp + j * 3, v: out / n, src: ci, born: S.t });
+        }
+      }
+    });
+    for (let i = S.parts.length - 1; i >= 0; i--) {
+      const p = S.parts[i];
+      p.vx += gx * dt; p.vy += gy * dt;
+      const P0 = [p.x, p.y], P1 = [p.x + p.vx * dt, p.y + p.vy * dt];
+      let absorbed = -1, hit = false;
+      for (let ci = 0; ci < S.cs.length && absorbed < 0; ci++) {
+        const c = S.cs[ci], n = c.pts.length, young = ci === p.src && S.t - p.born < 0.15;
+        if (!young && segHit(P0, P1, c.pts[n - 1], c.pts[0]) >= 0) { absorbed = ci; break; }
+        if (young || hit) continue;
+        for (let e = 0; e < n - 1; e++) {
+          const A = c.pts[e], B = c.pts[e + 1];
+          if (segHit(P0, P1, A, B) >= 0) {
+            let ex = B[0] - A[0], ey = B[1] - A[1]; const el = Math.hypot(ex, ey); ex /= el; ey /= el;
+            const nx = -ey, ny = ex, vn = p.vx * nx + p.vy * ny, vt = p.vx * ex + p.vy * ey;
+            p.vx = ex * vt * 0.92 - nx * vn * 0.15; p.vy = ey * vt * 0.92 - ny * vn * 0.15;
+            hit = true; break;
+          }
+        }
+      }
+      if (!hit && absorbed < 0) { p.x = P1[0]; p.y = P1[1]; }
+      if (absorbed < 0) for (let ci = 0; ci < S.cs.length; ci++) {
+        if (ci === p.src && S.t - p.born < 0.15) continue;
+        if (inside([p.x, p.y], S.cs[ci].pts)) { absorbed = ci; break; }
+      }
+      if (absorbed >= 0) { S.cs[absorbed].V += p.v; S.parts.splice(i, 1); continue; }
+      if (p.x < -30 || p.x > 130 || p.y < -60 || p.y > 200 || S.t - p.born > 6) { S.lost += p.v; S.parts.splice(i, 1); }
+    }
+    // keep each container within what it can physically hold
+    S.cs.forEach(c => { const A = area(c.pts); if (c.V > A) c.V = A; });
+  }
+  const pct = c => c.V / c.capUp * 100;
+  const inBand = c => c.target == null || Math.abs(pct(c) - c.target) <= c.tol;
+  return { area, clipBelow, levelFor, capAt, newState, step, water, pct, inBand, hgt };
+})();
+
+// ---------- shapes & stages ----------
+const cup = (cx, top, w, h, fl = 2) => [[cx - w / 2 - fl, top], [cx - w / 2, top + h], [cx + w / 2, top + h], [cx + w / 2 + fl, top]];
+// a jug with a pouring lip on the right (the left wall stands taller); sp = spout length
+const jugR = (cx, top, w, h, sp = 5) => [[cx - w / 2, top - 6], [cx - w / 2, top + h], [cx + w / 2, top + h], [cx + w / 2, top + 4], [cx + w / 2 + sp, top]];
+const jugL = (cx, top, w, h, sp = 5) => jugR(-cx, top, w, h, sp).map(([x, y]) => [-x, y]).reverse();
+const flask = (cx, top, w, h, neck, nh = 10) => [[cx - neck / 2, top], [cx - neck / 2, top + nh], [cx - w / 2, top + h * 0.5], [cx - w / 2, top + h],
+  [cx + w / 2, top + h], [cx + w / 2, top + h * 0.5], [cx + neck / 2, top + nh], [cx + neck / 2, top]];
+
+// Layout rule: a target's mouth sits just below and beside the lip that feeds it, so a steady
+// hand can keep the stream on target across a useful range of angles.
+const STAGES = [
+  { name: 'はじめての一杯', hint: '右に傾けて、右のコップの緑の線まで注ごう',
+    cups: [{ pts: jugR(32, 46, 30, 40), fill: 0.85 }, { pts: cup(70, 64, 30, 34), target: 40, tol: 6 }] },
+  { name: '目盛りぴったり', hint: '少しずつ傾けて、細い目盛りの範囲で止めよう',
+    cups: [{ pts: jugR(30, 40, 32, 46), fill: 0.9 }, { pts: cup(68, 60, 24, 46), target: 30, tol: 3 }] },
+  { name: 'リレー', hint: '右のコップに移してから、左に傾けて左下のコップへ',
+    cups: [{ pts: jugR(22, 26, 24, 24), fill: 0.92 }, { pts: jugL(56, 52, 24, 26) }, { pts: cup(22, 72, 22, 30), target: 22, tol: 5 }] },
+  { name: 'ふたつに分ける', hint: '左右のコップを同じ高さまで満たそう',
+    cups: [{ pts: cup(50, 40, 40, 26), fill: 0.92 }, { pts: cup(18, 72, 26, 28), target: 35, tol: 5 }, { pts: cup(82, 72, 26, 28), target: 35, tol: 5 }] },
+  { name: '細い口', hint: 'フラスコの細い口をねらって注ごう',
+    cups: [{ pts: jugR(25, 44, 36, 40, 10), fill: 0.95 }, { pts: flask(60, 60, 30, 46, 9), target: 30, tol: 5 }] },
+  { name: 'フラスコから', hint: '口が細いので大きく傾けないと出てこない。出すぎに注意',
+    cups: [{ pts: flask(30, 44, 32, 40, 10, 4), fill: 0.92 }, { pts: cup(63, 64, 20, 40), target: 15, tol: 4 }] },
+];
+
+(() => {
+  const D2R = Math.PI / 180, R2D = 180 / Math.PI;
+  const $ = id => document.getElementById(id);
+  const stage = $('stage'), cv = $('cv'), ctx = cv.getContext('2d');
+  const css = getComputedStyle(document.documentElement);
+  const tok = (n, d) => css.getPropertyValue(n).trim() || d;
+  const C = { bg: tok('--bg', '#000'), fg: '#fff', ok: tok('--ok', '#34c759'), muted: tok('--muted', '#8e8e93'),
+    glass: tok('--glass', 'rgba(255,255,255,.82)'), glassFill: tok('--glass-fill', 'rgba(255,255,255,.05)'), band: tok('--band', 'rgba(52,199,89,.22)') };
+  const FONT = tok('--font', 'sans-serif');
+
+  if (!/github\.io$/.test(location.hostname)) document.querySelectorAll('.nav-out').forEach(a => { a.removeAttribute('href'); a.style.cursor = 'default'; });
+
+  let W = 0, H = 0, DPR = 1;
+  function resize() { const r = stage.getBoundingClientRect(); DPR = Math.min(window.devicePixelRatio || 1, 3);
+    W = r.width; H = r.height; cv.width = Math.round(W * DPR); cv.height = Math.round(H * DPR); }
+  new ResizeObserver(resize).observe(stage); resize();
+
+  const store = { get(k, d) { try { const v = localStorage.getItem('pour.' + k); return v == null ? d : JSON.parse(v); } catch (_) { return d; } },
+                  set(k, v) { try { localStorage.setItem('pour.' + k, JSON.stringify(v)); } catch (_) {} } };
+  let best = store.get('best', {});
+
+  // ---------- game state ----------
+  let box = { x0: 0, x1: 100, y0: 0, y1: 150 };
+  window.__pour = () => S; // read-only hook for automated checks
+  let si = Math.min(STAGES.length - 1, Math.max(0, store.get('stage', 0) | 0));
+  let S = null, phase = 'play', holdT = 0;
+  function load(i) {
+    si = i; store.set('stage', si); S = PH.newState(STAGES[si]); phase = 'play'; holdT = 0;
+    const all = S.cs.flatMap(c => c.pts);
+    box = { x0: Math.min(...all.map(p => p[0])) - 8, x1: Math.max(...all.map(p => p[0])) + 8,
+            y0: Math.min(...all.map(p => p[1])) - 10, y1: Math.max(...all.map(p => p[1])) + 18 };
+    $('stNo').textContent = 'STAGE ' + (si + 1); $('stName').textContent = STAGES[si].name;
+    setHint(STAGES[si].hint, false); $('sheet').hidden = true;
+  }
+  let hintText = '', hintKeep = null;
+  function setHint(t, keep) { if (t !== hintText) { $('hint').textContent = t; hintText = t; }
+    if (keep !== hintKeep) { $('hint').classList.toggle('keep', keep); hintKeep = keep; } }
+  const starsHTML = n => '★'.repeat(n) + '<span class="off">' + '★'.repeat(3 - n) + '</span>';
+  function finish(ok) {
+    phase = ok ? 'clear' : 'fail';
+    const lostPct = S.lost / S.total * 100;
+    const n = lostPct <= 5 ? 3 : lostPct <= 15 ? 2 : 1;
+    if (ok) { if ((best[si] || 0) < n) { best[si] = n; store.set('best', best); } }
+    $('sheetTitle').textContent = ok ? (si === STAGES.length - 1 ? '全ステージクリア' : 'クリア') : '水が足りません';
+    $('stars').innerHTML = ok ? starsHTML(n) : '';
+    $('stars').hidden = !ok;
+    $('sheetMsg').textContent = ok
+      ? `こぼした水 ${lostPct.toFixed(1)}%` + (n < 3 ? '\n5%以下で★3つ' : '')
+      : '目標の線まで届く量の水が残っていません。やり直してみよう。';
+    $('sheetMsg').style.whiteSpace = 'pre-line';
+    $('sheetNext').hidden = !ok || si === STAGES.length - 1;
+    $('sheet').hidden = false;
+  }
+  $('btnReset').addEventListener('click', () => load(si));
+  $('sheetRetry').addEventListener('click', () => load(si));
+  $('sheetNext').addEventListener('click', () => load(Math.min(STAGES.length - 1, si + 1)));
+  function openPicker() {
+    const g = $('grid'); g.textContent = '';
+    STAGES.forEach((st, i) => {
+      const b = document.createElement('button'); b.type = 'button'; b.className = 'stage-btn';
+      if (i === si) b.setAttribute('aria-current', 'true');
+      const no = document.createElement('span'); no.className = 'no'; no.textContent = i + 1;
+      const nm = document.createElement('span'); nm.className = 'nm'; nm.textContent = st.name;
+      const s = document.createElement('span'); s.className = 'st'; s.innerHTML = starsHTML(best[i] || 0);
+      b.append(no, nm, s); b.addEventListener('click', () => { $('picker').hidden = true; load(i); });
+      g.append(b);
+    });
+    $('picker').hidden = false;
+  }
+  $('btnStages').addEventListener('click', openPicker);
+  $('pickClose').addEventListener('click', () => { $('picker').hidden = true; });
+  document.querySelectorAll('.btn, .sheet, .tab').forEach(el => el.addEventListener('pointerdown', e => e.stopPropagation()));
+
+  // ---------- sensors ----------
+  let raw = null, g = [0, -1, -0.05], source = 'demo', lastOrient = null, vote = -4, alive = false, running = false;
+  const norm = v => { const n = Math.hypot(v[0], v[1], v[2]) || 1; return [v[0] / n, v[1] / n, v[2] / n]; };
+  const orientDown = (b, gm) => { const B = b * D2R, G = gm * D2R; return [Math.sin(G) * Math.cos(B), -Math.sin(B), -Math.cos(B) * Math.cos(G)]; };
+  function onOrient(e) { if (e.beta == null || e.gamma == null) return; lastOrient = orientDown(e.beta, e.gamma); alive = true;
+    if (source !== 'motion') { raw = lastOrient; source = 'orient'; } }
+  function onMotion(e) {
+    const a = e.accelerationIncludingGravity; if (!a || a.x == null || a.y == null || a.z == null) return;
+    const n = Math.hypot(a.x, a.y, a.z); if (n < 2) return;
+    const v = [a.x / n, a.y / n, a.z / n];
+    if (lastOrient) { const d = v[1] * lastOrient[1] + v[2] * lastOrient[2]; if (Math.abs(d) > 0.3) vote = Math.max(-40, Math.min(40, vote + (d > 0 ? 1 : -1))); }
+    const s = vote >= 0 ? 1 : -1; raw = [v[0] * s, v[1] * s, v[2] * s]; source = 'motion'; alive = true;
+  }
+  let notice = { text: '', warn: false };
+  function setNotice(text, warn) { if (text === notice.text && warn === notice.warn) return; notice = { text, warn };
+    const el = $('notice'); el.hidden = !text; el.textContent = text; el.classList.toggle('warn', !!warn); }
+  let demoMsg = '';
+  function enterDemo(msg) { source = 'demo'; demoMsg = msg; }
+  async function start() {
+    if (start.busy) return; start.busy = true; $('gate').hidden = true;
+    const asks = [];
+    if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function')
+      asks.push(DeviceMotionEvent.requestPermission().catch(() => 'denied'));
+    if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function')
+      asks.push(DeviceOrientationEvent.requestPermission().catch(() => 'denied'));
+    window.addEventListener('deviceorientation', onOrient);
+    window.addEventListener('devicemotion', onMotion);
+    try { if (navigator.wakeLock) navigator.wakeLock.request('screen').catch(() => {}); } catch (_) {}
+    running = true; load(si);
+    const res = await Promise.all(asks);
+    const ok = res.some(r => r === 'granted') || asks.length === 0;
+    setTimeout(() => { if (!alive) enterDemo('センサーなし：左右にドラッグで傾けられます'); }, ok ? 1500 : 0);
+  }
+  $('gate').addEventListener('click', start);
+  $('gate').addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); start(); } });
+
+  // ---------- demo tilt (drag / arrow keys) ----------
+  let simA = 0, drag = null;
+  stage.addEventListener('pointerdown', e => { if (source !== 'demo' || !running) return; drag = { x: e.clientX, a: simA }; stage.setPointerCapture(e.pointerId); });
+  stage.addEventListener('pointermove', e => { if (!drag) return; simA = Math.max(-89, Math.min(89, drag.a + (e.clientX - drag.x) * 0.15)); });
+  const endDrag = () => { drag = null; };
+  stage.addEventListener('pointerup', endDrag); stage.addEventListener('pointercancel', endDrag);
+  window.addEventListener('keydown', e => {
+    if (source !== 'demo' || !running) return;
+    const k = e.shiftKey ? 5 : 0.5;
+    if (e.key === 'ArrowRight') { simA = Math.min(89, simA + k); e.preventDefault(); }
+    if (e.key === 'ArrowLeft') { simA = Math.max(-89, simA - k); e.preventDefault(); }
+    if (e.key === '0') simA = 0;
+  });
+
+  function screenAngle() { const a = (screen.orientation && typeof screen.orientation.angle === 'number') ? screen.orientation.angle
+    : (typeof window.orientation === 'number' ? window.orientation : 0); return a * D2R; }
+  function toScreen(v) { const a = screenAngle(), c = Math.cos(a), s = Math.sin(a); return [v[0] * c - v[1] * s, v[0] * s + v[1] * c, v[2]]; }
+
+  // ---------- drawing helpers ----------
+  let sc = 1, ox = 0, oy = 0;
+  const X = x => ox + x * sc, Y = y => oy + y * sc;
+  function path(pts, close) { ctx.beginPath(); pts.forEach(([x, y], i) => i ? ctx.lineTo(X(x), Y(y)) : ctx.moveTo(X(x), Y(y))); if (close) ctx.closePath(); }
+  function fmt(v) { let s = (Math.round(v * 10) / 10).toFixed(1); if (s === '-0.0') s = '0.0'; return s + '°'; }
+
+  let dW = [0, 1], angleShown = '';
+  let last = performance.now();
+  function frame(t) {
+    const dt = Math.min(0.05, (t - last) / 1000); last = t;
+    // gravity in screen/design coordinates
+    let dT = dW, mag = 1, upright = true;
+    if (source === 'demo') { dT = [Math.sin(simA * D2R), Math.cos(simA * D2R)]; }
+    else if (raw) {
+      const a = 1 - Math.exp(-dt / 0.06);
+      g = norm([g[0] + (raw[0] - g[0]) * a, g[1] + (raw[1] - g[1]) * a, g[2] + (raw[2] - g[2]) * a]);
+      const [x, y] = toScreen(g); const dx = x, dy = -y; mag = Math.hypot(dx, dy);
+      if (mag > 0.2) dT = [dx / mag, dy / mag];
+      upright = mag > 0.55;
+    }
+    const k = 1 - Math.exp(-dt / 0.07); // water lags the hand slightly, like a real slosh
+    dW = [dW[0] + (dT[0] - dW[0]) * k, dW[1] + (dT[1] - dW[1]) * k]; { const n = Math.hypot(dW[0], dW[1]) || 1; dW = [dW[0] / n, dW[1] / n]; }
+    const ang = Math.atan2(dT[0], dT[1]) * R2D;
+
+    const aTxt = fmt(ang);
+    if (aTxt !== angleShown) { $('angle').textContent = aTxt; angleShown = aTxt; $('angle').classList.toggle('level', aTxt === '0.0°'); }
+    if (running) setNotice(source === 'demo' ? demoMsg : (!upright ? '端末を立てて持ってください' : ''), source !== 'demo' && !upright);
+
+    if (S && running && phase === 'play') {
+      const n = Math.ceil(dt / (1 / 60));
+      for (let i = 0; i < n; i++) PH.step(S, dW, Math.min(1, Math.max(0.35, mag)), dt / n);
+      const targets = S.cs.filter(c => c.target != null);
+      const ok = targets.every(PH.inBand) && S.parts.length === 0 && !S.cs.some(c => c.spilling);
+      if (ok) { holdT += dt; setHint('そのままキープ…', true); if (holdT >= 1.2) finish(true); }
+      else { holdT = 0; setHint(STAGES[si].hint, false); }
+      const need = targets.reduce((s, c) => s + (c.target - c.tol) / 100 * c.capUp, 0);
+      if (phase === 'play' && PH.water(S) < need - 1) finish(false);
+    }
+
+    // layout: fit the 100×150 design between the HUD and the action buttons
+    const topH = 128, botH = 104, availH = Math.max(100, H - topH - botH);
+    const bw = box.x1 - box.x0, bh = box.y1 - box.y0;
+    sc = Math.min((W - 24) / bw, availH / bh, Math.max(W, 360) / 60);
+    ox = (W - bw * sc) / 2 - box.x0 * sc; oy = topH + (availH - bh * sc) / 2 - box.y0 * sc;
+
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    ctx.fillStyle = C.bg; ctx.fillRect(0, 0, W, H);
+    if (S) {
+      for (const c of S.cs) {
+        // glass
+        path(c.pts, true); ctx.fillStyle = C.glassFill; ctx.fill();
+        // target band and line, marked on the glass like a measuring cup
+        if (c.target != null) {
+          ctx.save(); path(c.pts, true); ctx.clip();
+          const yAt = p => -PH.levelFor(c.pts, [0, 1], p / 100 * c.capUp);
+          const y1 = yAt(c.target + c.tol), y2 = yAt(c.target - c.tol), yt = yAt(c.target);
+          ctx.fillStyle = C.band; ctx.fillRect(X(-10), Y(y1), 120 * sc, (y2 - y1) * sc);
+          ctx.strokeStyle = C.ok; ctx.lineWidth = Math.max(1, 0.5 * sc); ctx.setLineDash([2 * sc, 1.5 * sc]);
+          ctx.beginPath(); ctx.moveTo(X(-10), Y(yt)); ctx.lineTo(X(110), Y(yt)); ctx.stroke(); ctx.setLineDash([]);
+          ctx.restore();
+        }
+        // water: everything in the glass below a level surface
+        if (c.V > 0.3) {
+          const L = PH.levelFor(c.pts, dW, Math.min(c.V, PH.area(c.pts)));
+          const poly = PH.clipBelow(c.pts, dW, L);
+          if (poly.length > 2) {
+            const good = c.target != null && PH.inBand(c);
+            path(poly, true); ctx.fillStyle = good ? C.ok : C.fg; ctx.globalAlpha = 0.92; ctx.fill(); ctx.globalAlpha = 1;
+          }
+        }
+        // outline, open at the mouth
+        path(c.pts, false); ctx.strokeStyle = C.glass; ctx.lineWidth = Math.max(1.2, 0.7 * sc); ctx.lineJoin = 'round'; ctx.lineCap = 'round'; ctx.stroke();
+        // readout under each target
+        if (c.target != null) {
+          const bx = c.pts.reduce((s, p) => s + p[0], 0) / c.pts.length, by = Math.max(...c.pts.map(p => p[1]));
+          const good = PH.inBand(c);
+          ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+          ctx.fillStyle = good ? C.ok : C.fg; ctx.font = `300 ${Math.max(15, 5.2 * sc)}px ${FONT}`;
+          ctx.fillText(Math.round(PH.pct(c)) + '%', X(bx), Y(by) + 5);
+          ctx.fillStyle = C.muted; ctx.font = `500 ${Math.max(10, 3 * sc)}px ${FONT}`;
+          ctx.fillText(`目標 ${c.target}±${c.tol}%`, X(bx), Y(by) + 7 + Math.max(15, 5.2 * sc));
+        }
+      }
+      // falling water
+      ctx.fillStyle = C.fg;
+      const r = Math.max(1.4, 0.75 * sc);
+      ctx.beginPath();
+      for (const p of S.parts) { ctx.moveTo(X(p.x) + r, Y(p.y)); ctx.arc(X(p.x), Y(p.y), r, 0, Math.PI * 2); }
+      ctx.fill();
+      // keep-still progress
+      if (holdT > 0 && phase === 'play') {
+        ctx.strokeStyle = C.ok; ctx.lineWidth = 3; ctx.lineCap = 'round';
+        ctx.beginPath(); ctx.arc(W - 26, 26, 10, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * Math.min(1, holdT / 1.2)); ctx.stroke();
+      }
+    }
+    requestAnimationFrame(frame);
+  }
+  load(si);
+  requestAnimationFrame(frame);
+})();
+</script>
+
+</body></html>
