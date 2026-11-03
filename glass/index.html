@@ -166,7 +166,7 @@ body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--font);overf
   const wrap180 = d => ((d + 180) % 360 + 360) % 360 - 180, wrap45 = d => ((d + 45) % 90 + 90) % 90 - 45;
   function toggleRef() {
     if (refVec || refRoll != null) { refVec = null; refRoll = null; }
-    else if (mode === 'flat') refVec = [cur.x, cur.y, cur.z]; else refRoll = cur.roll;
+    else refVec = [cur.x, cur.y, cur.z]; // works for both flat and upright holds
     kick(1.6, -1.2);
   }
 
@@ -229,8 +229,17 @@ body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--font);overf
       else { value = tilt; dir = [-vx, vy]; }
       mag = value;
     } else {
-      value = -(refRoll != null ? wrap180(roll - refRoll) : wrap45(roll)); // clockwise reads positive
-      dir = [-Math.sign(value), 0]; mag = Math.abs(value);
+      // Upright: measure the lean away from the nearest screen axis that points down, in both directions.
+      // Side-to-side lean moves the dot across; forward/back lean (toward or away from you) moves it up/down.
+      const gs = [vx, -vy];                                             // gravity on the screen plane (y down)
+      const a = Math.abs(gs[1]) >= Math.abs(gs[0]) ? [0, Math.sign(gs[1]) || 1] : [Math.sign(gs[0]) || 1, 0];
+      let dx = vx, dy = vy, dz = vz;
+      if (refVec) { dx = vx - refVec[0]; dy = vy - refVec[1]; dz = vz - refVec[2];
+        value = Math.acos(clamp(vx * refVec[0] + vy * refVec[1] + vz * refVec[2], -1, 1)) * R2D; }
+      else value = Math.acos(clamp(gs[0] * a[0] + gs[1] * a[1], -1, 1)) * R2D;
+      const ds = [dx, -dy], along = ds[0] * a[0] + ds[1] * a[1];
+      const e = refVec ? [ds[0] - along * a[0], ds[1] - along * a[1]] : [gs[0] - (gs[0] * a[0] + gs[1] * a[1]) * a[0], gs[1] - (gs[0] * a[0] + gs[1] * a[1]) * a[1]];
+      dir = [-e[0] + a[0] * dz, -e[1] + a[1] * dz]; mag = value;
     }
     if (Math.abs(value - shown) >= 0.06 || t - shownAt > 350) { shown = value; shownAt = t; }
     const absv = Math.abs(shown);
@@ -317,7 +326,7 @@ body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--font);overf
     // reading
     ctx.fillStyle = '#fff'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     const fs = R * 0.54; ctx.font = `400 ${fs}px ${FONT}`;
-    const txt = fmt(mode === 'flat' ? absv : shown);
+    const txt = fmt(absv);
     const degW = ctx.measureText('°').width;
     ctx.fillText(txt, cx + degW * 0.35, cy + fs * 0.03);
     ctx.restore();
