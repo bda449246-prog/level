@@ -1,0 +1,346 @@
+<!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-status-bar-style" content="black"><style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);box-sizing:border-box;height:100%}[hidden]{display:none!important}</style></head><body>
+<title>ガラスの水準器</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<style>
+/* Layout: one full-bleed canvas stage, the glass orb at its center; a single hint line at the bottom. Colors sampled from the reference recordings; single dark look by design. */
+:root{
+  --bg:#000; --fg:#fff; --red:#fe393d; --green:#2bca4e; --dot:#34c759; --hint:rgba(255,255,255,.6); --pill:rgba(44,44,46,.9);
+  --font:-apple-system,BlinkMacSystemFont,"SF Pro Display","SF Pro Text","Hiragino Sans","Helvetica Neue",Arial,sans-serif;
+  color-scheme:dark;
+}
+html,body{height:100%}
+[hidden]{display:none!important}
+body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--font);overflow:hidden;
+  -webkit-user-select:none;user-select:none;-webkit-tap-highlight-color:transparent;-webkit-touch-callout:none}
+#stage{position:fixed;inset:0;touch-action:none;cursor:pointer}
+#cv{position:absolute;inset:0;width:100%;height:100%;display:block}
+#hint{position:absolute;left:0;right:0;bottom:calc(18px + env(safe-area-inset-bottom,0px));text-align:center;font-size:13px;color:var(--hint);
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));pointer-events:none;transition:opacity .5s}
+#hint span{background:var(--pill);padding:6px 12px;border-radius:999px;display:inline-block}
+#themes{position:absolute;top:calc(14px + env(safe-area-inset-top,0px));left:50%;transform:translateX(-50%);display:flex;gap:10px;
+  padding:7px 10px;border-radius:999px;background:rgba(30,30,32,.55);-webkit-backdrop-filter:blur(12px);backdrop-filter:blur(12px)}
+.sw{appearance:none;width:26px;height:26px;border-radius:50%;border:0;padding:0;cursor:pointer;box-shadow:inset 0 0 0 1px rgba(255,255,255,.25)}
+.sw[aria-pressed="true"]{box-shadow:0 0 0 2px #fff,inset 0 0 0 1px rgba(255,255,255,.25)}
+.sw:focus-visible{outline:2px solid #fff;outline-offset:3px}
+#sw-black{background:radial-gradient(circle at 40% 30%,#5a595b,#1f1e20)}
+#sw-red{background:radial-gradient(circle at 40% 30%,#ff8a89,#fe393d)}
+#sw-green{background:radial-gradient(circle at 40% 30%,#6bff8e,#2bca4e)}
+#gate{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;background:rgba(0,0,0,.72);
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));text-align:center;cursor:pointer}
+#gate p{margin:0;font-size:15px;line-height:1.6;color:#d1d1d6;max-width:21em;text-wrap:balance}
+#gate b{display:inline-block;background:var(--fg);color:#000;font:600 17px var(--font);padding:13px 34px;border-radius:999px}
+#gate:focus-visible{outline:2px solid var(--dot);outline-offset:-6px}
+@media (prefers-reduced-motion:reduce){#hint{transition:none}}
+</style>
+
+<div id="stage" aria-label="水準器。タップで今の角度を基準にします">
+  <canvas id="cv"></canvas>
+  <div id="themes" role="group" aria-label="テーマ">
+    <button class="sw" id="sw-black" type="button" data-theme="black" aria-label="黒ガラス" aria-pressed="true"></button>
+    <button class="sw" id="sw-red" type="button" data-theme="red" aria-label="赤ガラス" aria-pressed="false"></button>
+    <button class="sw" id="sw-green" type="button" data-theme="green" aria-label="緑ガラス" aria-pressed="false"></button>
+  </div>
+  <div id="hint" hidden><span id="hintText"></span></div>
+  <div id="gate" role="button" tabindex="0" aria-label="タップして開始" hidden>
+    <p>この水準器はモーションセンサーを使います。<br>アクセスを聞かれたら「許可」を選んでください。</p>
+    <b>タップして開始</b>
+  </div>
+</div>
+
+<script>
+(() => {
+  const D2R = Math.PI / 180, R2D = 180 / Math.PI;
+  const stage = document.getElementById('stage'), cv = document.getElementById('cv'), ctx = cv.getContext('2d');
+  const gate = document.getElementById('gate'), hint = document.getElementById('hint'), hintText = document.getElementById('hintText');
+  const css = getComputedStyle(document.documentElement);
+  const FONT = css.getPropertyValue('--font').trim() || 'sans-serif';
+  const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  // palettes sampled from the recordings (RGB). Each theme has a resting look, a reference look (after a tap)
+  // and a level look that ripples out from the orb.
+  const LOOK = {
+    black: { bg: [0, 0, 0], grid: [24, 23, 25], vig: 1, top: [76, 75, 77], bot: [38, 37, 39], rim: [57, 71, 74], dim: [255, 255, 255] },
+    red:   { bg: [254, 57, 61], grid: [255, 74, 76], vig: 0, top: [255, 134, 133], bot: [254, 79, 83], rim: [255, 150, 150], dim: [255, 230, 230] },
+    green: { bg: [43, 202, 78], grid: [58, 212, 92], vig: 0, top: [70, 230, 106], bot: [40, 192, 74], rim: [140, 255, 170], dim: [235, 255, 240] },
+  };
+  const LEVEL = {
+    green: { bg: [43, 202, 78], grid: null, dot: [52, 199, 89], fillTop: [103, 255, 140], fillBot: [61, 205, 94], onTop: [61, 223, 98], onBot: [45, 202, 80], rim: [140, 255, 170] },
+    black: { bg: [0, 0, 0], grid: [24, 23, 25], dot: [34, 34, 36], fillTop: [76, 75, 77], fillBot: [38, 37, 39], onTop: [70, 69, 71], onBot: [34, 33, 35], rim: [90, 104, 108] },
+  };
+  const THEMES = {
+    black: { base: LOOK.black, ref: LOOK.red, level: LEVEL.green },
+    red:   { base: LOOK.red, ref: LOOK.black, level: LEVEL.green },
+    green: { base: LOOK.green, ref: LOOK.red, level: LEVEL.black },
+  };
+  const mixLook = (a, b, t) => { const o = {}; for (const k in a) o[k] = Array.isArray(a[k]) ? mix(a[k], b[k], t) : a[k] + (b[k] - a[k]) * t; return o; };
+  const mix = (a, b, t) => a.map((v, i) => v + (b[i] - v) * t);
+  const rgb = (c, a = 1) => `rgba(${c[0] | 0},${c[1] | 0},${c[2] | 0},${a})`;
+  const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+  const ease = t => t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+
+  const store = { get(k, d) { try { const v = localStorage.getItem('glass.' + k); return v == null ? d : v; } catch (_) { return d; } },
+                  set(k, v) { try { localStorage.setItem('glass.' + k, v); } catch (_) {} } };
+  const fromHash = location.hash.replace('#', '');
+  let themeName = THEMES[fromHash] ? fromHash : (THEMES[store.get('theme', 'black')] ? store.get('theme', 'black') : 'black');
+  const swatches = [...document.querySelectorAll('.sw')];
+  function setTheme(n) {
+    themeName = n; store.set('theme', n);
+    swatches.forEach(b => b.setAttribute('aria-pressed', b.dataset.theme === n));
+    document.body.style.background = 'rgb(' + THEMES[n].base.bg.join(',') + ')';
+  }
+  swatches.forEach(b => {
+    b.addEventListener('pointerdown', e => e.stopPropagation());
+    b.addEventListener('pointerup', e => e.stopPropagation());
+    b.addEventListener('click', e => { e.stopPropagation(); setTheme(b.dataset.theme); kick(1.4, 1.2); });
+  });
+  window.addEventListener('hashchange', () => { const h = location.hash.replace('#', ''); if (THEMES[h]) setTheme(h); });
+
+  let W = 0, H = 0, DPR = 1;
+  function resize() { DPR = Math.min(window.devicePixelRatio || 1, 3); W = stage.clientWidth; H = stage.clientHeight;
+    cv.width = Math.round(W * DPR); cv.height = Math.round(H * DPR); }
+  new ResizeObserver(resize).observe(stage); resize();
+
+  // ---------- sensors ----------
+  let raw = null, g = [0.02, -0.015, -1], source = 'demo', lastOrient = null, vote = -4, alive = false;
+  const norm = v => { const n = Math.hypot(v[0], v[1], v[2]) || 1; return [v[0] / n, v[1] / n, v[2] / n]; };
+  const orientDown = (b, gm) => { const B = b * D2R, G = gm * D2R; return [Math.sin(G) * Math.cos(B), -Math.sin(B), -Math.cos(B) * Math.cos(G)]; };
+  function onOrient(e) { if (e.beta == null || e.gamma == null) return; lastOrient = orientDown(e.beta, e.gamma); alive = true;
+    if (source !== 'motion') { raw = lastOrient; source = 'orient'; showHint(''); } }
+  function onMotion(e) {
+    const a = e.accelerationIncludingGravity; if (!a || a.x == null || a.y == null || a.z == null) return;
+    const n = Math.hypot(a.x, a.y, a.z); if (n < 2) return;
+    const v = [a.x / n, a.y / n, a.z / n];
+    if (lastOrient) { const d = v[1] * lastOrient[1] + v[2] * lastOrient[2]; if (Math.abs(d) > 0.3) vote = clamp(vote + (d > 0 ? 1 : -1), -40, 40); }
+    const s = vote >= 0 ? 1 : -1; raw = [v[0] * s, v[1] * s, v[2] * s]; source = 'motion'; alive = true; showHint('');
+  }
+  function listen() {
+    window.addEventListener('deviceorientation', onOrient);
+    window.addEventListener('devicemotion', onMotion);
+    try { if (navigator.wakeLock) navigator.wakeLock.request('screen').catch(() => {}); } catch (_) {}
+  }
+  function showHint(t) { hint.hidden = !t; hintText.textContent = t; }
+  const DEMO_HINT = 'ドラッグで傾ける ・ タップで基準を設定';
+  const needsAsk = typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function';
+  async function start() {
+    if (start.done) return; start.done = true; gate.hidden = true;
+    const asks = [];
+    if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function')
+      asks.push(DeviceMotionEvent.requestPermission().catch(() => 'denied'));
+    if (needsAsk) asks.push(DeviceOrientationEvent.requestPermission().catch(() => 'denied'));
+    listen();
+    const res = await Promise.all(asks);
+    const ok = asks.length === 0 || res.some(r => r === 'granted');
+    setTimeout(() => { if (!alive) { source = 'demo'; showHint(DEMO_HINT); } }, ok ? 1200 : 0);
+  }
+  if (needsAsk) { gate.hidden = false; gate.addEventListener('click', start);
+    gate.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); start(); } }); }
+  else start();
+
+  // ---------- demo tilt: drag the orb, fine near the center ----------
+  let sim = [1.6, -0.9], drag = null;  // degrees (x right, y down)
+  const curve = px => Math.sign(px) * 0.015 * Math.abs(px) * (1 + Math.pow(Math.abs(px) / 110, 2));
+  stage.addEventListener('pointerdown', e => {
+    if (!gate.hidden) return;
+    drag = { x: e.clientX, y: e.clientY, s: sim.slice(), moved: false }; stage.setPointerCapture(e.pointerId);
+  });
+  stage.addEventListener('pointermove', e => {
+    if (!drag) return;
+    const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+    if (!drag.moved && Math.hypot(dx, dy) > 6) drag.moved = true;
+    if (drag.moved && source === 'demo') sim = [drag.s[0] - curve(dx), drag.s[1] - curve(dy)]; // the bubble follows the finger
+  });
+  stage.addEventListener('pointerup', () => { if (drag && !drag.moved) toggleRef(); drag = null; });
+  stage.addEventListener('pointercancel', () => { drag = null; });
+  window.addEventListener('keydown', e => {
+    if (source !== 'demo' || !gate.hidden) return;
+    const k = e.shiftKey ? 1 : 0.1, m = { ArrowLeft: [k, 0], ArrowRight: [-k, 0], ArrowUp: [0, k], ArrowDown: [0, -k] }[e.key];
+    if (m) { sim = [sim[0] + m[0], sim[1] + m[1]]; e.preventDefault(); }
+    if (e.key === ' ' || e.key === 'Enter') { toggleRef(); e.preventDefault(); }
+  });
+
+  // ---------- level state ----------
+  let mode = 'flat', refVec = null, refRoll = null, level = false, cur = { x: 0, y: 0, z: -1, roll: 0 };
+  function screenAngle() { const a = (screen.orientation && typeof screen.orientation.angle === 'number') ? screen.orientation.angle
+    : (typeof window.orientation === 'number' ? window.orientation : 0); return a * D2R; }
+  function toScreen(v) { const a = screenAngle(), c = Math.cos(a), s = Math.sin(a); return [v[0] * c - v[1] * s, v[0] * s + v[1] * c, v[2]]; }
+  const wrap180 = d => ((d + 180) % 360 + 360) % 360 - 180, wrap45 = d => ((d + 45) % 90 + 90) % 90 - 45;
+  function toggleRef() {
+    if (refVec || refRoll != null) { refVec = null; refRoll = null; }
+    else if (mode === 'flat') refVec = [cur.x, cur.y, cur.z]; else refRoll = cur.roll;
+    kick(1.6, -1.2);
+  }
+
+  // ---------- springs & motion ----------
+  const spring = (x, k, c) => ({ x, v: 0, k, c, to(t, dt) { this.v += (this.k * (t - this.x) - this.c * this.v) * dt; this.x += this.v * dt; return this.x; } });
+  const fill = spring(0, 150, 15);         // green dot → fills the orb
+  const sq = spring(0, 300, 7.5);          // horizontal stretch (vertical squashes the other way)
+  const lobe = spring(0, 420, 10);         // side bulge, the "jelly" look in the recording
+  const bx = spring(0, 90, 15), by = spring(0, 90, 15); // dot position (px, relative to orb radius)
+  let ripple = 0, redMix = 0, rimHeat = 0, shown = 0, shownAt = 0;
+  function kick(a, b) { if (reduceMotion) return; sq.v += a; lobe.v += b; rimHeat = Math.min(1.2, rimHeat + 0.8); }
+
+  function fmt(v) { let s = (Math.round(v * 10) / 10).toFixed(1); if (s === '-0.0') s = '0.0'; return s + '°'; }
+
+  function orbPath(cx, cy, R) {
+    const a = sq.x, b = lobe.x, n = 120;
+    ctx.beginPath();
+    for (let i = 0; i <= n; i++) {
+      const t = i / n * Math.PI * 2, c = Math.cos(t), s = Math.sin(t);
+      const r = R * (1 + b * 0.08 * Math.cos(4 * t));
+      const x = cx + c * r * (1 + a * 0.06), y = cy + s * r * (1 - a * 0.06);
+      i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+    }
+    ctx.closePath();
+  }
+  function grid(cx, cy, cell, color) {
+    ctx.strokeStyle = color; ctx.lineWidth = 1;
+    ctx.beginPath();
+    for (let x = cx - cell / 2 - Math.ceil(W / cell) * cell; x <= W; x += cell) { const X = Math.round(x) + 0.5; ctx.moveTo(X, 0); ctx.lineTo(X, H); }
+    for (let y = cy - cell / 2 - Math.ceil(H / cell) * cell; y <= H; y += cell) { const Y = Math.round(y) + 0.5; ctx.moveTo(0, Y); ctx.lineTo(W, Y); }
+    ctx.stroke();
+  }
+  function dimple(cx, cy, w, h, color) {
+    ctx.save();
+    ctx.beginPath(); ctx.ellipse(cx, cy, w, h, 0, 0, Math.PI * 2);
+    const gr = ctx.createRadialGradient(cx, cy - h * 0.2, 0, cx, cy, Math.max(w, h));
+    gr.addColorStop(0, rgb(color, 0.0)); gr.addColorStop(0.75, rgb(color, 0.05)); gr.addColorStop(1, rgb(color, 0.12));
+    ctx.fillStyle = gr; ctx.fill();
+    ctx.lineWidth = Math.max(1, w * 0.035); ctx.strokeStyle = rgb([255, 255, 255], 0.13); ctx.stroke();
+    ctx.restore();
+  }
+
+  let last = performance.now();
+  function frame(t) {
+    const dt = Math.min(0.033, (t - last) / 1000); last = t;
+    // --- read tilt
+    let vx, vy, vz;
+    if (source === 'demo') { const v = norm([Math.sin(sim[0] * D2R), -Math.sin(sim[1] * D2R), -1]); [vx, vy, vz] = v; }
+    else if (raw) { const a = 1 - Math.exp(-dt / 0.12); g = norm([g[0] + (raw[0] - g[0]) * a, g[1] + (raw[1] - g[1]) * a, g[2] + (raw[2] - g[2]) * a]); [vx, vy, vz] = toScreen(g); }
+    else [vx, vy, vz] = [0, 0, -1];
+    const tilt = Math.acos(Math.min(1, Math.abs(vz))) * R2D;
+    if (mode === 'flat' && tilt > 50) { mode = 'up'; refVec = null; refRoll = null; }
+    else if (mode === 'up' && tilt < 40) { mode = 'flat'; refVec = null; refRoll = null; }
+    const roll = Math.atan2(-vy, vx) * R2D - 90;
+    cur = { x: vx, y: vy, z: vz, roll };
+    // value shown, and the direction the bubble floats (toward the high side)
+    let value, dir = [0, 0], mag;
+    if (mode === 'flat') {
+      if (refVec) { const d = clamp(vx * refVec[0] + vy * refVec[1] + vz * refVec[2], -1, 1); value = Math.acos(d) * R2D; dir = [-(vx - refVec[0]), (vy - refVec[1])]; }
+      else { value = tilt; dir = [-vx, vy]; }
+      mag = value;
+    } else {
+      value = -(refRoll != null ? wrap180(roll - refRoll) : wrap45(roll)); // clockwise reads positive
+      dir = [-Math.sign(value), 0]; mag = Math.abs(value);
+    }
+    if (Math.abs(value - shown) >= 0.06 || t - shownAt > 350) { shown = value; shownAt = t; }
+    const absv = Math.abs(shown);
+    const wasLevel = level;
+    if (!level && absv < 0.05) level = true; else if (level && absv >= 0.15) level = false;
+    if (level !== wasLevel) kick(level ? -2.4 : 2.0, level ? 2.2 : -1.6);
+
+    const hasRef = !!refVec || refRoll != null;
+    // --- animate
+    const R = Math.min(W, H) * 0.257, cx = W / 2, cy = H / 2;
+    const dl = Math.hypot(dir[0], dir[1]);
+    const off = Math.min(1.25, mag * 0.09);               // in orb radii
+    const tx = dl > 1e-9 ? dir[0] / dl * off : 0, ty = dl > 1e-9 ? dir[1] / dl * off : 0;
+    const pbx = bx.x, pby = by.x;
+    bx.to(level ? 0 : tx, dt); by.to(level ? 0 : ty, dt);
+    if (!reduceMotion) { sq.v += (bx.x - pbx) * 3.5 - (by.x - pby) * 2.5; lobe.v += Math.hypot(bx.x - pbx, by.x - pby) * 4; }
+    fill.to(level ? 1 : 0, dt); sq.to(0, dt); lobe.to(0, dt);
+    const rTarget = level && fill.x > 0.7 ? 1 : 0;
+    ripple = rTarget ? Math.min(1, ripple + dt / 0.45) : Math.max(0, ripple - dt / 0.32);
+    redMix += ((hasRef ? 1 : 0) - redMix) * (1 - Math.exp(-dt / 0.09));
+    rimHeat = Math.max(0, rimHeat - dt * 1.4);
+    const motionHeat = clamp(Math.abs(sq.v) * 0.12 + Math.abs(lobe.v) * 0.08 + (fill.x > 0.04 && fill.x < 0.96 ? 0.8 : 0), 0, 1);
+    const heat = clamp(rimHeat + motionHeat, 0, 1);
+
+    // --- draw background
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    const TH = THEMES[themeName], L = TH.level;
+    const B = mixLook(TH.base, TH.ref, redMix);
+    const base = B.bg;
+    ctx.fillStyle = rgb(base); ctx.fillRect(0, 0, W, H);
+    const vignette = (alpha) => { // lighter toward the middle, as on the dark screen in the recording
+      const vg = ctx.createRadialGradient(cx, cy, 0, cx, cy, Math.hypot(W, H) * 0.6);
+      vg.addColorStop(0, rgb([12, 12, 13], alpha)); vg.addColorStop(1, rgb([0, 0, 0], 0));
+      ctx.fillStyle = vg; ctx.fillRect(0, 0, W, H);
+    };
+    if (B.vig > 0.01) vignette(B.vig);
+    const cell = Math.min(W, H) / 5;
+    grid(cx, cy, cell, rgb(B.grid));
+    if (ripple > 0) {
+      const maxR = Math.hypot(Math.max(cx, W - cx), Math.max(cy, H - cy)) + 4;
+      const rr = R + (maxR - R) * ease(ripple);
+      ctx.save(); ctx.beginPath(); ctx.arc(cx, cy, rr, 0, Math.PI * 2); ctx.fillStyle = rgb(L.bg); ctx.fill();
+      if (L.grid) { ctx.clip(); vignette(1); grid(cx, cy, cell, rgb(L.grid)); }
+      ctx.restore();
+    }
+    const onGreen = ripple >= 1;
+
+    // --- shadow
+    ctx.save();
+    orbPath(cx, cy, R);
+    ctx.shadowColor = `rgba(0,0,0,${onGreen ? (L.grid ? 0.5 : 0.12) : (B.vig > 0.5 ? 0.5 : 0.22)})`; ctx.shadowBlur = R * 0.32; ctx.shadowOffsetY = R * 0.1;
+    ctx.fillStyle = rgb(base); ctx.fill();
+    ctx.restore();
+
+    // --- glass body
+    ctx.save();
+    orbPath(cx, cy, R); ctx.clip();
+    const top = B.top, bot = B.bot;
+    let gr = ctx.createLinearGradient(cx, cy - R, cx, cy + R);
+    gr.addColorStop(0, rgb(top)); gr.addColorStop(1, rgb(bot)); ctx.fillStyle = gr; ctx.fillRect(cx - R * 1.4, cy - R * 1.4, R * 2.8, R * 2.8);
+    // refraction dimples: top, bottom, left, right
+    const dc = B.dim;
+    dimple(cx, cy - R * 0.69, R * 0.31, R * 0.13, dc);
+    dimple(cx, cy + R * 0.7, R * 0.27, R * 0.12, dc);
+    dimple(cx - R * 0.71, cy, R * 0.11, R * 0.26, dc);
+    dimple(cx + R * 0.71, cy, R * 0.11, R * 0.26, dc);
+    // the green dot, growing to fill the glass when level
+    const f = clamp(fill.x, 0, 1.08);
+    const dotR = R * (0.46 + 0.62 * f);
+    const dX = cx + bx.x * R * (1 - Math.min(1, f)), dY = cy + by.x * R * (1 - Math.min(1, f));
+    const gt = onGreen ? L.onTop : L.fillTop, gb = onGreen ? L.onBot : L.fillBot;
+    const flatDot = L.dot;
+    gr = ctx.createLinearGradient(cx, cy - R, cx, cy + R);
+    const k = clamp((f - 0.15) / 0.6, 0, 1); // small dot is flat green; the full orb is glassy green
+    gr.addColorStop(0, rgb(mix(flatDot, gt, k))); gr.addColorStop(1, rgb(mix(flatDot, gb, k)));
+    ctx.beginPath(); ctx.arc(dX, dY, dotR, 0, Math.PI * 2); ctx.fillStyle = gr; ctx.fill();
+    // soft top light and bottom depth
+    gr = ctx.createRadialGradient(cx - R * 0.15, cy - R * 0.55, 0, cx, cy - R * 0.3, R * 1.1);
+    gr.addColorStop(0, 'rgba(255,255,255,0.10)'); gr.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.fillStyle = gr; ctx.fillRect(cx - R * 1.4, cy - R * 1.4, R * 2.8, R * 2.8);
+    gr = ctx.createRadialGradient(cx, cy + R * 1.2, R * 0.2, cx, cy + R * 0.6, R * 1.2);
+    gr.addColorStop(0, 'rgba(0,0,0,0.10)'); gr.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = gr; ctx.fillRect(cx - R * 1.4, cy - R * 1.4, R * 2.8, R * 2.8);
+    // reading
+    ctx.fillStyle = '#fff'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    const fs = R * 0.54; ctx.font = `400 ${fs}px ${FONT}`;
+    const txt = fmt(mode === 'flat' ? absv : shown);
+    const degW = ctx.measureText('°').width;
+    ctx.fillText(txt, cx + degW * 0.35, cy + fs * 0.03);
+    ctx.restore();
+
+    // --- rim: a quiet edge at rest, iridescent while the glass moves
+    const restRim = onGreen ? L.rim : B.rim;
+    orbPath(cx, cy, R);
+    ctx.lineWidth = Math.max(1, R * 0.008); ctx.strokeStyle = rgb(f > 0.9 ? L.rim : restRim, 0.75); ctx.stroke();
+    if (heat > 0.02) {
+      let ir;
+      if (ctx.createConicGradient) {
+        ir = ctx.createConicGradient(t / 900, cx, cy);
+        [[0, [52, 230, 120]], [0.25, [60, 220, 220]], [0.5, [240, 236, 130]], [0.75, [70, 240, 140]], [1, [52, 230, 120]]].forEach(([o, c]) => ir.addColorStop(o, rgb(c)));
+      } else ir = rgb([60, 230, 130]);
+      orbPath(cx, cy, R * 1.005);
+      ctx.globalAlpha = heat; ctx.lineWidth = Math.max(2, R * 0.03); ctx.strokeStyle = ir; ctx.stroke(); ctx.globalAlpha = 1;
+    }
+
+    requestAnimationFrame(frame);
+  }
+  setTheme(themeName);
+  requestAnimationFrame(frame);
+})();
+</script>
+
+</body></html>
