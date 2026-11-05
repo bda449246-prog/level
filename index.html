@@ -175,7 +175,10 @@ body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--font);overf
     if (!ptr) return;
     const dx = e.clientX - ptr.x, dy = e.clientY - ptr.y;
     if (!ptr.moved && Math.hypot(dx, dy) > 6) ptr.moved = true;
-    if (ptr.moved && source === 'demo') { simX = ptr.sx + dx * K; simY = ptr.sy - dy * K; }
+    if (ptr.moved && source === 'demo') {
+      if (demoBase === 'up') { simX = ptr.sx + Math.sign(dx) * 0.04 * Math.abs(dx) * (1 + Math.pow(dx / 60, 2)); simY = ptr.sy - dy * K; }
+      else { simX = ptr.sx + dx * K; simY = ptr.sy - dy * K; }
+    }
   });
   stage.addEventListener('pointerup', () => {
     if (ptr && !ptr.moved) toggleRef();
@@ -184,7 +187,8 @@ body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--font);overf
   stage.addEventListener('pointercancel', () => { ptr = null; });
 
   // ---------- level logic ----------
-  let mode = 'flat', refVec = null, refRoll = null, isLevel = false, shown = 0, shownAt = 0;
+  let mode = 'flat', refVec = null, refRoll = null, refPhi = 0, refZ = 0, isLevel = false, shown = 0, shownAt = 0;
+  let textRot = 0, textRotTarget = 0; // the reading turns to stay upright in the real world
   let cur = { x: 0, y: 0, z: -1, roll: 0 };
 
   function screenAngle() {
@@ -202,7 +206,8 @@ body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--font);overf
   function clearRef() { refVec = null; refRoll = null; }
   function toggleRef() {
     if (refVec || refRoll != null) { clearRef(); return; }
-    if (mode === 'flat') refVec = [cur.x, cur.y, cur.z]; else refRoll = cur.roll;
+    if (mode === 'flat') refVec = [cur.x, cur.y, cur.z];
+    else { refRoll = cur.roll; refPhi = Math.atan2(-cur.y, cur.x); refZ = cur.z; } // the red "reference ground"
   }
 
   function toast(msg) { toastEl.textContent = msg; toastEl.classList.add('show');
@@ -212,10 +217,14 @@ body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--font);overf
   // ---------- drawing ----------
   function fmt(v) { let s = (Math.round(v * 10) / 10).toFixed(1); if (s === '-0.0') s = '0.0'; return s + '°'; }
 
+  let rotC = [0, 0];
   function drawNumber(text, x, y, size, color) {
+    ctx.save();
+    ctx.translate(rotC[0], rotC[1]); ctx.rotate(textRot); ctx.translate(-rotC[0], -rotC[1]);
     ctx.fillStyle = color; ctx.font = `200 ${size}px ${FONT}`;
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     ctx.fillText(text, x, y);
+    ctx.restore();
   }
   // degree sign hangs off the right, like iOS: center the digits, not the whole string
   function numX(text, cx, size) {
@@ -238,6 +247,12 @@ body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--font);overf
 
     const roll = Math.atan2(-y, x) * R2D - 90; // 0 when held upright in portrait
     cur = { x, y, z, roll };
+    // Upright: the number turns with the horizon so it reads level in the real world.
+    // Flat: it keeps the last way the phone was held (portrait, landscape, upside down).
+    if (mode === 'up') textRotTarget = roll * D2R;               // same turn as the horizon line
+    else if (tilt > 22) textRotTarget = Math.round(roll / 90) * 90 * D2R;
+    let dr = textRotTarget - textRot; dr = Math.atan2(Math.sin(dr), Math.cos(dr));
+    textRot += mode === 'up' ? dr : dr * (1 - Math.exp(-dt / 0.12));
 
     let value, dir = [0, 0];
     if (mode === 'flat') {
@@ -260,7 +275,9 @@ body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--font);overf
 
     ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
     const cx = W / 2, cy = H / 2, m = Math.min(W, H);
-    ctx.fillStyle = bg; ctx.fillRect(0, 0, W, H);
+    rotC = [cx, cy];
+    // upright keeps a black sky; the reference shows up as its own red ground instead of a red screen
+    ctx.fillStyle = mode === 'up' ? C.bg : bg; ctx.fillRect(0, 0, W, H);
 
     if (mode === 'flat') {
       const R = m * 0.3;
@@ -278,19 +295,27 @@ body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--font);overf
       ctx.save(); circ(c2); ctx.clip(); drawNumber(text, tx, cy, size, C.ink); ctx.restore();
       ctx.save(); circ(c1); ctx.clip(); circ(c2); ctx.clip(); drawNumber(text, tx, cy, size, C.fg); ctx.restore();
     } else {
-      // horizon: ground half-plane stays level with the real world
+      // horizon: the white ground stays level with the real world.
+      // With a reference, a red ground stays level with the pose you tapped; the two cross as you turn.
       const phi = Math.atan2(-y, x);                     // screen-space angle of "down" (y flipped)
-      const shift = Math.max(-0.45, Math.min(0.45, -z * 0.5)) * H;
-      const ground = () => {
-        ctx.translate(cx, cy); ctx.rotate(phi - Math.PI / 2);
-        ctx.beginPath(); ctx.rect(-3 * m - W, shift, 6 * m + 2 * W, 3 * m + 2 * H);
+      const span = 3 * Math.hypot(W, H);
+      const plane = (ang, sh) => {
+        ctx.translate(cx, cy); ctx.rotate(ang - Math.PI / 2);
+        ctx.beginPath(); ctx.rect(-span, sh, span * 2, span);
         ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
       };
-      ctx.save(); ground(); ctx.fillStyle = isLevel ? C.level : C.fg; ctx.fill(); ctx.restore();
+      const shift = Math.max(-0.45, Math.min(0.45, -z * 0.5)) * H;
+      const ground = () => plane(phi, shift);
+      const hasR = refRoll != null;
+      if (hasR) {
+        const rShift = Math.max(-0.45, Math.min(0.45, -(z - refZ) * 0.5)) * H;
+        ctx.save(); plane(phi - refPhi + Math.PI / 2, rShift); ctx.fillStyle = isLevel ? C.level : C.ref; ctx.fill(); ctx.restore();
+      }
+      ctx.save(); ground(); ctx.fillStyle = isLevel && !hasR ? C.level : C.fg; ctx.fill(); ctx.restore();
 
       const size = m * 0.2, tx = numX(text, cx, size);
       drawNumber(text, tx, cy, size, C.fg);
-      if (!isLevel) { ctx.save(); ground(); ctx.clip(); drawNumber(text, tx, cy, size, C.ink); ctx.restore(); }
+      if (!(isLevel && !hasR)) { ctx.save(); ground(); ctx.clip(); drawNumber(text, tx, cy, size, C.ink); ctx.restore(); }
     }
     requestAnimationFrame(frame);
   }
