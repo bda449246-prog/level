@@ -189,7 +189,20 @@ body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--font);overf
   // ---------- piano voice (Web Audio additive synth) ----------
   let ac = null, master = null, noiseBuf = null;
   const voices = [];
+  // iPhone: Web Audio follows the ring/silent switch, but a playing <audio> element moves the page to
+  // media playback, so a silent looping clip keeps the instrument audible in silent mode.
+  const SILENT = 'data:audio/wav;base64,UklGRvQHAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YdAHAACAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgA==';
+  let unlockEl = null;
+  function unlockMedia() {
+    try {
+      if (!unlockEl) { unlockEl = document.createElement('audio'); unlockEl.src = SILENT; unlockEl.loop = true; unlockEl.preload = 'auto';
+        unlockEl.setAttribute('playsinline', ''); unlockEl.setAttribute('x-webkit-airplay', 'deny'); unlockEl.volume = 0.01; }
+      const pr = unlockEl.play(); if (pr && pr.catch) pr.catch(() => {});
+    } catch (_) {}
+  }
+  document.addEventListener('visibilitychange', () => { if (document.hidden && unlockEl) unlockEl.pause(); });
   function initAudio() {
+    unlockMedia();
     const AC = window.AudioContext || window.webkitAudioContext;
     if (!AC) return;
     if (!ac) {
@@ -381,7 +394,8 @@ body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--font);overf
   }
 
   function strike(midi, vel = 0.8, o = {}) {
-    if (!ac || muted || ac.state !== 'running') return;
+    if (!ac || muted) return;
+    if (ac.state !== 'running') ac.resume().catch(() => {});
     if (tone === 'guitar') return pluck(midi, vel, o);
     if (isSus()) return susShort(midi, vel, o.t != null ? o.t : ac.currentTime + 0.005, o.len || 0.5);
     const t = o.t != null ? o.t : ac.currentTime + 0.005;
@@ -474,7 +488,8 @@ body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--font);overf
   let arpNext = 0, arpStep = 0;
   function arpRestart() { if (!ac) return; damp(0.25); arpStep = 0; arpNext = ac.currentTime + 0.01; lit.length = 0; }
   function arpTick() {
-    if (!ac || !running || play !== 'arp' || ac.state !== 'running') return;
+    if (!ac || !running || play !== 'arp') return;
+    if (ac.state !== 'running') { ac.resume().catch(() => {}); return; }
     const ahead = ac.currentTime + 0.12, stepDur = 60 / bpm / 2;
     if (arpNext < ac.currentTime - 0.2) arpNext = ac.currentTime + 0.01; // resume after the tab slept
     while (arpNext < ahead) {
@@ -489,7 +504,8 @@ body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--font);overf
   function onNote() {
     if (!running) return;
     if (isSus() && play !== 'arp') {
-      if (!ac || muted || ac.state !== 'running') return;
+      if (!ac || muted) return;
+      if (ac.state !== 'running') ac.resume().catch(() => {});
       const notes = play === 'single' ? [curMidi] : heldVoicing(chord());
       holdNotes(notes); sounding = new Set(notes); return;
     }
