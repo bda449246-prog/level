@@ -1,0 +1,410 @@
+<!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-status-bar-style" content="black"><style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);box-sizing:border-box;height:100%}[hidden]{display:none!important}</style></head><body>
+<title>水準器ファイト</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<style>
+/* Layout: a side-view arena fills the screen. HP bars across the top, the level readout (angle + bubble vial) under them,
+   0°合わせ at the bottom. Black stage, white player, coloured opponent; green means safe/chance, red means danger. */
+:root{
+  --bg:#000; --fg:#fff; --dim:#8e8e93; --ok:#34c759; --red:#ff3b30; --warn:#ff9f0a; --pill:rgba(28,28,30,.82);
+  --ui:-apple-system,BlinkMacSystemFont,"Hiragino Sans","Hiragino Kaku Gothic ProN","Yu Gothic UI",sans-serif;
+  color-scheme:dark;
+}
+html,body{height:100%}
+[hidden]{display:none!important}
+body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--ui);overflow:hidden;
+  -webkit-user-select:none;user-select:none;-webkit-touch-callout:none;-webkit-tap-highlight-color:transparent;touch-action:none}
+#stage{position:fixed;inset:0;overflow:hidden}
+#cv{position:absolute;inset:0;width:100%;height:100%;display:block}
+#bars{position:absolute;left:0;right:0;top:0;padding:calc(10px + env(safe-area-inset-top,0px)) calc(14px + env(safe-area-inset-right,0px)) 0 calc(14px + env(safe-area-inset-left,0px));
+  display:grid;grid-template-columns:1fr auto 1fr;gap:10px;align-items:end;pointer-events:none}
+.side .nm{font-size:12px;font-weight:700;color:#d1d1d6;margin-bottom:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.side.r{text-align:right}
+.hp{height:12px;border-radius:6px;background:#2c2c2e;overflow:hidden;position:relative}
+.hp i{position:absolute;top:0;bottom:0;left:0;width:100%;background:var(--ok);transition:width .25s}
+.hp b{position:absolute;top:0;bottom:0;left:0;width:100%;background:#fff;opacity:.5;transition:width .8s .25s}
+.side.r .hp i,.side.r .hp b{left:auto;right:0}
+.side.r .hp i{background:var(--red)}
+#round{font-size:12px;font-weight:800;color:var(--dim);padding-bottom:1px;letter-spacing:1px}
+#zero{position:absolute;left:50%;transform:translateX(-50%);bottom:calc(12px + env(safe-area-inset-bottom,0px));
+  appearance:none;border:0;padding:8px 16px;border-radius:999px;background:var(--pill);color:#fff;font:600 13px var(--ui);cursor:pointer}
+#zero:focus-visible,.go:focus-visible{outline:2px solid #fff;outline-offset:2px}
+#notice{position:absolute;left:50%;transform:translateX(-50%);bottom:calc(56px + env(safe-area-inset-bottom,0px));max-width:calc(100% - 32px);
+  padding:6px 12px;border-radius:12px;background:var(--pill);font-size:12px;font-weight:600;color:#e5e5ea;text-align:center;pointer-events:none}
+#notice.warn{color:var(--warn)}
+.sheet{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;padding:20px;background:rgba(0,0,0,.7);-webkit-backdrop-filter:blur(6px);backdrop-filter:blur(6px)}
+.card{width:min(440px,100%);max-height:100%;overflow:auto;background:#1c1c1e;border-radius:24px;padding:22px;text-align:center;box-shadow:0 20px 60px rgba(0,0,0,.5)}
+.card h1{margin:2px 0 8px;font-size:26px;letter-spacing:1px}
+.card p{margin:8px 0;font-size:14px;line-height:1.6;color:#d1d1d6;text-align:left}
+.rules{display:grid;grid-template-columns:auto 1fr;gap:6px 10px;text-align:left;font-size:13px;color:#d1d1d6;margin:10px 0;align-items:center}
+.rules b{color:#fff;white-space:nowrap}
+.tag{display:inline-block;padding:1px 7px;border-radius:6px;font-size:11px;font-weight:800;color:#000}
+.go{appearance:none;border:0;margin-top:12px;width:100%;padding:14px;border-radius:14px;background:var(--ok);color:#000;font:700 17px var(--ui);cursor:pointer}
+.go.sub{background:#3a3a3c;color:#fff;margin-top:8px}
+#endT{font-size:34px;font-weight:800;letter-spacing:2px;margin:6px 0}
+</style>
+
+<div id="stage">
+  <canvas id="cv" aria-label="傾きで体を倒して戦う格闘ゲーム"></canvas>
+  <div id="bars">
+    <div class="side"><div class="nm">あなた</div><div class="hp" id="hpP"><b></b><i></i></div></div>
+    <div id="round">R1</div>
+    <div class="side r"><div class="nm" id="eName">門下生</div><div class="hp" id="hpE"><b></b><i></i></div></div>
+  </div>
+  <div id="notice" hidden></div>
+  <button id="zero" type="button">0°合わせ</button>
+
+  <div id="gate" class="sheet" role="button" tabindex="0" aria-label="タップしてスタート">
+    <div class="card">
+      <h1>水準器ファイト</h1>
+      <p>スマホを立てて持ち、<b>左右に傾けた角度</b>だけ自分の体が倒れます。右へ傾けると前(相手のほう)へ、左へ傾けると後ろへ倒れます。</p>
+      <div class="rules">
+        <span class="tag" style="background:#ff9f0a">上段</span><span><b>パンチ</b> … 大きく倒してよける(後ろ約25°/前約40°)</span>
+        <span class="tag" style="background:#ff3b30">中段</span><span><b>キック</b> … <b>後ろ</b>へ倒してよける</span>
+        <span class="tag" style="background:#bf5af2">頭上</span><span><b>かかと落とし</b> … <b>前</b>へ倒してよける</span>
+        <span class="tag" style="background:#34c759">攻撃</span><span>前へ<b>35°以上</b>すばやく倒すとパンチ。よけた直後や、相手が構えている最中に当てると大ダメージ</span>
+      </div>
+      <p>3人の相手に勝ち抜きましょう。「0°合わせ」で今の持ち方をまっすぐ(0°)にできます。</p>
+      <button class="go" type="button" tabindex="-1">タップしてスタート</button>
+    </div>
+  </div>
+  <div id="end" class="sheet" hidden>
+    <div class="card">
+      <div id="endT">KO</div>
+      <p id="endP" style="text-align:center"></p>
+      <button class="go" id="next" type="button">次の相手へ</button>
+      <button class="go sub" id="retry" type="button">最初から</button>
+    </div>
+  </div>
+</div>
+
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  const D2R = Math.PI / 180, clamp = (v, a, b) => Math.max(a, Math.min(b, v)), lerp = (a, b, t) => a + (b - a) * t;
+  const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  // ============ sensors (shared with the other level apps) ============
+  let raw = null, source = 'demo', lastOrient = null, vote = -4, alive = false, running = false;
+  const orientDown = (b, gm) => { const B = b * D2R, G = gm * D2R; return [Math.sin(G) * Math.cos(B), -Math.sin(B), -Math.cos(B) * Math.cos(G)]; };
+  function onOrient(e) { if (e.beta == null || e.gamma == null) return; lastOrient = orientDown(e.beta, e.gamma); alive = true;
+    if (source !== 'motion') { raw = lastOrient; source = 'orient'; } }
+  function onMotion(e) {
+    const a = e.accelerationIncludingGravity; if (!a || a.x == null || a.y == null || a.z == null) return;
+    const n = Math.hypot(a.x, a.y, a.z); if (n < 2) return;
+    const v = [a.x / n, a.y / n, a.z / n];
+    if (lastOrient) { const d = v[1] * lastOrient[1] + v[2] * lastOrient[2]; if (Math.abs(d) > 0.3) vote = clamp(vote + (d > 0 ? 1 : -1), -40, 40); }
+    const s = vote >= 0 ? 1 : -1; raw = [v[0] * s, v[1] * s, v[2] * s]; source = 'motion'; alive = true;
+  }
+  function screenAngle() { const a = (screen.orientation && typeof screen.orientation.angle === 'number') ? screen.orientation.angle
+    : (typeof window.orientation === 'number' ? window.orientation : 0); return a * D2R; }
+  let ref = null, flat = false, tilt = 0, simA = 0, hold = false;
+  const screenDown = () => { const a = screenAngle(); return [-Math.sin(a), -Math.cos(a)]; };
+  function readTilt() {
+    if (source === 'demo') { flat = false; return simA; }
+    if (!raw) return 0;
+    const m = Math.hypot(raw[0], raw[1]); flat = m < 0.35; if (flat) return tilt * 0.9;
+    const cx = raw[0] / m, cy = raw[1] / m; if (!ref) ref = screenDown();
+    return Math.atan2(ref[0] * cy - ref[1] * cx, ref[0] * cx + ref[1] * cy) / D2R;
+  }
+  function setZero() { if (source === 'demo') { simA = 0; return; } if (raw) { const m = Math.hypot(raw[0], raw[1]); if (m > 0.35) ref = [raw[0] / m, raw[1] / m]; } }
+  window.addEventListener('orientationchange', () => { if (!running) ref = null; });
+
+  // demo input: drag or arrow keys
+  const keys = new Set(); let drag = null;
+  const stage = $('stage');
+  stage.addEventListener('pointerdown', e => { if (source !== 'demo' || !running) return; drag = { x: e.clientX, a: simA, id: e.pointerId }; });
+  stage.addEventListener('pointermove', e => { if (drag && e.pointerId === drag.id) simA = clamp(drag.a + (e.clientX - drag.x) * 0.45, -85, 85); });
+  ['pointerup', 'pointercancel'].forEach(ev => stage.addEventListener(ev, e => { if (drag && e.pointerId === drag.id) drag = null; }));
+  window.addEventListener('keydown', e => { keys.add(e.key); if (e.key.startsWith('Arrow')) e.preventDefault(); if (e.key === '0') setZero(); });
+  window.addEventListener('keyup', e => keys.delete(e.key));
+  window.addEventListener('blur', () => keys.clear());
+  $('zero').addEventListener('pointerdown', e => e.stopPropagation());
+  $('zero').addEventListener('click', () => { setZero(); say('ここを0°にしました'); });
+
+  // ============ fighters ============
+  // World units are metres, x to the right, y up from the floor. The player's feet stay at x = 0; the body is a rigid
+  // plank that pivots at the feet, leaning by the phone's tilt (positive = forward, toward the opponent).
+  const HOME = 1.9, BODY_R = 0.2, HEAD_S = 1.68, HEAD_R = 0.22, SHOULDER = 1.42, HIT_R = 0.17;
+  const STAGES = [
+    { name: '門下生', color: '#ff6b5e', hp: 100, wind: 1.25, rec: 0.85, idle: [0.7, 1.4], dmg: 14, guard: 0.3, feint: 0, guide: true },
+    { name: '師範代', color: '#ff9f0a', hp: 130, wind: 0.95, rec: 0.65, idle: [0.45, 1.0], dmg: 17, guard: 0.5, feint: 0.15, guide: true },
+    { name: '師範', color: '#bf5af2', hp: 160, wind: 0.72, rec: 0.5, idle: [0.3, 0.8], dmg: 20, guard: 0.65, feint: 0.3, guide: false },
+  ];
+  const ATK = {
+    punch: { label: '上段パンチ', hint: '大きく倒せ!', color: '#ff9f0a', strike: 0.2, from: [HOME - 0.35, 1.7], to: [-0.32, 1.7], lunge: 1.05 },
+    kick:  { label: '中段キック', hint: '← 後ろへ!', color: '#ff3b30', strike: 0.24, from: [HOME - 0.3, 1.05], to: [0.02, 1.05], lunge: 1.15 },
+    heel:  { label: 'かかと落とし', hint: '前へ! →', color: '#bf5af2', strike: 0.2, from: [-0.2, 2.8], to: [-0.2, 0.5], lunge: 0.95 },
+  };
+  const player = { lean: 0, vel: 0, hp: 100, punch: -1, armed: true, inv: 0, hitShown: 0 };
+  const foe = { x: HOME, hp: 100, max: 100, st: 'idle', t: 0, dur: 1, atk: null, hit: false, flash: 0, stun: false };
+  let si = 0, S = STAGES[0], phase = 'title', phaseT = 0, slow = 0, shake = 0, redFlash = 0, combo = 0;
+  const pops = [], sparks = [], trail = [];
+
+  const body = (lean) => { const u = [Math.sin(lean * D2R), Math.cos(lean * D2R)]; return { u, a: [u[0] * 0.15, u[1] * 0.15], b: [u[0] * SHOULDER, u[1] * SHOULDER], h: [u[0] * HEAD_S, u[1] * HEAD_S] }; };
+  function segDist(p, a, b) { const abx = b[0] - a[0], aby = b[1] - a[1], t = clamp(((p[0] - a[0]) * abx + (p[1] - a[1]) * aby) / (abx * abx + aby * aby), 0, 1);
+    return Math.hypot(p[0] - a[0] - abx * t, p[1] - a[1] - aby * t); }
+  function hitsPlayer(p) { const B = body(player.lean); return segDist(p, B.a, B.b) < BODY_R + HIT_R || Math.hypot(p[0] - B.h[0], p[1] - B.h[1]) < HEAD_R + HIT_R; }
+  const strikePos = (a, k) => [lerp(a.from[0], a.to[0], k), lerp(a.from[1], a.to[1], k)];
+  function pop(text, x, y, color, size = 1) { pops.push({ text, x, y, color, size, t: 0 }); }
+  function spark(x, y, color, n = 14) { for (let i = 0; i < n; i++) { const a = Math.random() * Math.PI * 2, s = 2 + Math.random() * 4; sparks.push({ x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, t: 0, color }); } }
+
+  function foeSet(st, dur) { foe.st = st; foe.t = 0; foe.dur = dur; }
+  function startRound(i) {
+    si = i; S = STAGES[i]; foe.hp = foe.max = S.hp; foe.x = HOME; foe.stun = false; player.hp = 100; player.punch = -1; player.inv = 0; combo = 0;
+    foeSet('idle', 1.4); phase = 'intro'; phaseT = 0; $('end').hidden = true; $('eName').textContent = S.name; $('round').textContent = 'R' + (i + 1);
+    updBars(true);
+  }
+  function chooseAttack() { const ks = Object.keys(ATK); return ks[Math.floor(Math.random() * ks.length)]; }
+  function stepFoe(dt) {
+    foe.t += dt; foe.flash = Math.max(0, foe.flash - dt);
+    const A = foe.atk && ATK[foe.atk];
+    if (foe.st === 'idle') { foe.x += (HOME - foe.x) * Math.min(1, dt * 6);
+      if (foe.t >= foe.dur) { foe.atk = chooseAttack(); foe.feinted = false; foeSet('wind', S.wind * (0.9 + Math.random() * 0.25)); } }
+    else if (foe.st === 'wind') {
+      if (foe.atk === 'heel') foe.x += (A.lunge + 0.15 - foe.x) * Math.min(1, dt * 3);
+      if (!foe.feinted && S.feint && foe.t > foe.dur * 0.55 && Math.random() < S.feint * dt * 4) { // a feint: switch to a different attack
+        foe.feinted = true; let n; do n = chooseAttack(); while (n === foe.atk); foe.atk = n; foeSet('wind', S.wind * 0.6); pop('フェイント!', foe.x, 2.5, '#fff', 0.8); }
+      if (foe.t >= foe.dur) { foe.hit = false; foeSet('strike', A.strike); }
+    } else if (foe.st === 'strike') {
+      const k = clamp(foe.t / foe.dur, 0, 1);
+      foe.x = lerp(foe.atk === 'heel' ? A.lunge + 0.15 : HOME, A.lunge, Math.min(1, k * 1.4));
+      if (!foe.hit && player.inv <= 0 && hitsPlayer(strikePos(A, k))) {
+        foe.hit = true; player.hp = Math.max(0, player.hp - S.dmg); player.inv = 0.6; shake = 1; redFlash = 1; combo = 0;
+        const p = strikePos(A, k); spark(p[0], p[1], '#ff3b30', 22); pop('くらった!', 0, 2.4, '#ff3b30', 1);
+        if (navigator.vibrate) try { navigator.vibrate(60); } catch (_) {}
+        updBars();
+      }
+      if (foe.t >= foe.dur) {
+        if (!foe.hit) { pop('よけた!', 0, 2.45, '#34c759', 1.1); slow = 0.35; foe.stun = true; foeSet('recover', S.rec + 0.25); }
+        else { foe.stun = false; foeSet('recover', S.rec * 0.6); }
+      }
+    } else if (foe.st === 'recover') { foe.x += (HOME - foe.x) * Math.min(1, dt * 2.2);
+      if (foe.t >= foe.dur) { foe.stun = false; foeSet('idle', lerp(S.idle[0], S.idle[1], Math.random())); } }
+    else if (foe.st === 'hurt') { foe.x += (HOME + 0.15 - foe.x) * Math.min(1, dt * 5);
+      if (foe.t >= foe.dur) { foe.stun = false; foeSet('idle', lerp(S.idle[0], S.idle[1], Math.random()) * 0.7); } }
+  }
+  function playerPunch() {
+    const B = body(player.lean), fist = [B.b[0] + 0.78, B.b[1]];
+    // does the fist reach the opponent's body (a capsule from the floor to the shoulders, plus the head)?
+    const reach = segDist(fist, [foe.x, 0.2], [foe.x, 1.5]) < 0.25 + 0.15 || Math.hypot(fist[0] - foe.x, fist[1] - 1.75) < 0.23 + 0.15;
+    if (!reach) { pop('とどかない', fist[0], fist[1] + 0.4, '#8e8e93', 0.7); combo = 0; return; }
+    let dmg = 8, label = 'ヒット', col = '#fff';
+    if (foe.st === 'recover' && foe.stun) { dmg = 18; label = 'カウンター!'; col = '#34c759'; }
+    else if (foe.st === 'wind') { dmg = 15; label = '割り込み!'; col = '#34c759'; foe.stun = true; foeSet('hurt', 0.55); }
+    else if (foe.st === 'idle' && Math.random() < S.guard) { dmg = 2; label = 'ガード'; col = '#8e8e93'; foeSet('idle', 0.35); }
+    else if (foe.st === 'strike') { dmg = 10; label = '相打ち'; }
+    combo = dmg >= 15 ? combo + 1 : 0; if (combo >= 2) { dmg += 4 * (combo - 1); label += ` ${combo}連続`; }
+    foe.hp = Math.max(0, foe.hp - dmg); foe.flash = 0.25; spark(fist[0], fist[1], col === '#8e8e93' ? '#aaa' : '#fff', dmg > 10 ? 24 : 12);
+    pop(`${label} -${dmg}`, fist[0] + 0.2, fist[1] + 0.5, col, dmg > 10 ? 1.1 : 0.8);
+    if (dmg > 2 && foe.st !== 'hurt' && foe.st !== 'strike') foeSet('hurt', 0.35);
+    if (dmg >= 15) shake = Math.max(shake, 0.5);
+    updBars();
+  }
+  function stepPlayer(dt, rdt) {
+    const target = clamp(tilt, -82, 82);
+    const k = 160, c = 2 * Math.sqrt(k) * 0.9;   // a stiff spring so the body tracks the phone but keeps a little weight
+    player.vel += (k * (target - player.lean) - c * player.vel) * rdt; player.lean += player.vel * rdt;
+    player.inv = Math.max(0, player.inv - dt);
+    if (player.armed && player.lean >= 35 && phase === 'fight') { player.armed = false; player.punch = 0; player.didHit = false; }
+    if (player.lean < 18) player.armed = true;
+    if (player.punch >= 0) { player.punch += dt; if (!player.didHit && player.punch >= 0.1) { player.didHit = true; playerPunch(); } if (player.punch > 0.32) player.punch = -1; }
+    const B = body(player.lean); trail.push({ x: B.h[0], y: B.h[1], t: 0, sp: Math.abs(player.vel) }); if (trail.length > 14) trail.shift();
+  }
+
+  // ============ drawing ============
+  const cv = $('cv'), ctx = cv.getContext('2d');
+  let W = 0, H = 0, DPR = 1, sc = 100, ox = 0, gy = 0;
+  function resize() { DPR = Math.min(window.devicePixelRatio || 1, 2.5); W = stage.clientWidth; H = stage.clientHeight; cv.width = Math.round(W * DPR); cv.height = Math.round(H * DPR);
+    const top = W > H ? 96 : 150, bottom = 70; sc = Math.min(W / 4.5, (H - top - bottom) / 3.0); ox = W / 2 - 0.95 * sc; gy = H - bottom - Math.max(0, (H - top - bottom - 3.0 * sc) * 0.35); }
+  new ResizeObserver(resize).observe(stage); resize();
+  const X = x => ox + x * sc, Y = y => gy - y * sc;
+  function line(a, b, w, color) { ctx.strokeStyle = color; ctx.lineWidth = w * sc; ctx.lineCap = 'round'; ctx.beginPath(); ctx.moveTo(X(a[0]), Y(a[1])); ctx.lineTo(X(b[0]), Y(b[1])); ctx.stroke(); }
+  function limb(a, b, bend, w, color) { // a two-part limb with the joint pushed sideways by `bend`
+    const mx = (a[0] + b[0]) / 2, my = (a[1] + b[1]) / 2, dx = b[0] - a[0], dy = b[1] - a[1], L = Math.hypot(dx, dy) || 1;
+    const j = [mx - dy / L * bend, my + dx / L * bend];
+    ctx.strokeStyle = color; ctx.lineWidth = w * sc; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    ctx.beginPath(); ctx.moveTo(X(a[0]), Y(a[1])); ctx.lineTo(X(j[0]), Y(j[1])); ctx.lineTo(X(b[0]), Y(b[1])); ctx.stroke();
+  }
+  function circle(p, r, color) { ctx.fillStyle = color; ctx.beginPath(); ctx.arc(X(p[0]), Y(p[1]), r * sc, 0, Math.PI * 2); ctx.fill(); }
+
+  function drawPlayer(t) {
+    const B = body(player.lean), u = B.u, hip = [u[0] * 0.85, u[1] * 0.85];
+    const blink = player.inv > 0 && Math.floor(t * 20) % 2 === 0;
+    const col = blink ? 'rgba(255,255,255,.35)' : '#f2f2f7';
+    // after-images when leaning fast
+    trail.forEach((p, i) => { if (p.sp < 90) return; ctx.globalAlpha = (i / trail.length) * 0.25; circle([p.x, p.y], HEAD_R, '#34c759'); }); ctx.globalAlpha = 1;
+    limb([-0.14, 0], hip, -0.04, 0.12, col); limb([0.14, 0], hip, 0.04, 0.12, col);
+    line(hip, B.b, 0.26, col);
+    circle(B.h, HEAD_R, col);
+    ctx.fillStyle = '#000'; const eye = [B.h[0] + u[1] * 0.1 + u[0] * 0.03, B.h[1] - u[0] * 0.1 + u[1] * 0.03]; circle(eye, 0.03, '#000');
+    // arms: guard up, or the punching arm thrown straight at the opponent
+    const ext = player.punch >= 0 ? Math.sin(clamp(player.punch / 0.32, 0, 1) * Math.PI) : 0;
+    const guard = [B.b[0] + 0.3 + u[0] * 0.05, B.b[1] + 0.12 - u[0] * 0.05];
+    limb(B.b, [B.b[0] + 0.22, B.b[1] - 0.05], 0.08, 0.1, col);
+    const fist = ext > 0 ? [B.b[0] + 0.78 * ext + 0.2 * (1 - ext), B.b[1] + 0.02] : guard;
+    limb(B.b, fist, ext > 0.5 ? 0 : -0.12, 0.1, col); circle(fist, 0.09, ext > 0.3 ? '#34c759' : col);
+  }
+  function drawFoe(t) {
+    const A = foe.atk && ATK[foe.atk], x = foe.x, c = foe.flash > 0 ? '#fff' : S.color;
+    let lean = 0; if (foe.st === 'hurt') lean = 14; if (foe.st === 'recover' && foe.stun) lean = 8 + Math.sin(t * 9) * 4;
+    if (foe.st === 'idle') lean = Math.sin(t * 3) * 2;
+    const u = [Math.sin(lean * D2R), Math.cos(lean * D2R)], P = s => [x + u[0] * s, u[1] * s];
+    const hip = P(0.85), sh = P(1.42), head = P(1.68);
+    const k = foe.st === 'strike' ? clamp(foe.t / foe.dur, 0, 1) : 0, w = foe.st === 'wind' ? clamp(foe.t / foe.dur, 0, 1) : 0;
+    // legs
+    let front = [x - 0.16, 0], back = [x + 0.18, 0];
+    if (foe.atk === 'kick' && (foe.st === 'wind' || foe.st === 'strike')) front = foe.st === 'strike' ? strikePos(A, k) : [x - 0.25, 0.25 + 0.55 * w];
+    if (foe.atk === 'heel' && (foe.st === 'wind' || foe.st === 'strike')) front = foe.st === 'strike' ? strikePos(A, k) : [lerp(x - 0.2, x - 0.6, w), lerp(0.2, 2.3, w)];
+    limb(back, hip, -0.06, 0.13, c); limb(front, hip, (foe.atk === 'heel' && foe.st !== 'idle') ? -0.1 : 0.06, 0.13, c);
+    line(hip, sh, 0.28, c); circle(head, 0.23, c);
+    circle([head[0] - 0.1, head[1] + 0.02], 0.03, '#000');
+    // arms
+    let lead = [sh[0] - 0.3, sh[1] + 0.1];
+    if (foe.atk === 'punch' && foe.st === 'wind') lead = [sh[0] + 0.25 * w, sh[1] - 0.05];
+    if (foe.atk === 'punch' && foe.st === 'strike') lead = strikePos(A, k);
+    limb(sh, lead, foe.st === 'strike' ? 0 : 0.12, 0.11, c); circle(lead, 0.1, foe.st === 'strike' && foe.atk === 'punch' ? '#fff' : c);
+    limb(sh, [sh[0] - 0.12, sh[1] - 0.25], -0.08, 0.11, c);
+    if (foe.st === 'recover' && foe.stun) for (let i = 0; i < 3; i++) { const a = t * 4 + i * 2.1; ctx.fillStyle = '#ffd60a'; ctx.font = `${0.16 * sc}px ${getComputedStyle(document.documentElement).getPropertyValue('--ui')}`;
+      ctx.textAlign = 'center'; ctx.fillText('★', X(head[0] + Math.cos(a) * 0.3), Y(head[1] + 0.3 + Math.sin(a) * 0.08)); }
+  }
+  function drawTelegraph(t) {
+    if (foe.st !== 'wind' && foe.st !== 'strike') return;
+    const A = ATK[foe.atk], w = foe.st === 'wind' ? clamp(foe.t / foe.dur, 0, 1) : 1;
+    // the strike's path as a danger band
+    ctx.save(); ctx.globalAlpha = foe.st === 'strike' ? 0.5 : 0.18 + 0.25 * w * (0.6 + 0.4 * Math.sin(t * 20));
+    ctx.strokeStyle = A.color; ctx.lineWidth = HIT_R * 2 * sc; ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.moveTo(X(A.from[0]), Y(A.from[1])); ctx.lineTo(X(A.to[0]), Y(A.to[1])); ctx.stroke(); ctx.restore();
+    if (foe.st === 'wind') {
+      const fs = Math.max(18, Math.min(30, W * 0.05));
+      ctx.font = `800 ${fs}px ${getComputedStyle(document.documentElement).getPropertyValue('--ui')}`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillStyle = A.color; ctx.fillText(A.label + (S.guide ? '  ' + A.hint : ''), W / 2, Math.max(Y(3.0), W > H ? 118 : 0));
+      // countdown ring
+      ctx.strokeStyle = A.color; ctx.lineWidth = 4; ctx.beginPath(); ctx.arc(X(foe.x), Y(2.35), 14, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * (1 - w)); ctx.stroke();
+    }
+  }
+  function drawLevel(t) { // the level readout: angle and a bubble vial, as in the level apps
+    const land = W > H, w = Math.min(260, W * 0.6), h = 26, cx = land ? W / 2 + 40 : W / 2, cy = land ? 74 : 112;
+    const safe = Math.abs(player.lean) < 0.5;
+    const s = (Math.round(tilt * 10) / 10).toFixed(1).replace('-0.0', '0.0') + '°';
+    ctx.font = `300 ${Math.min(34, W * 0.07)}px ${getComputedStyle(document.documentElement).getPropertyValue('--ui')}`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillStyle = safe ? '#34c759' : '#fff'; if (land) { ctx.textAlign = 'right'; ctx.fillText(s, cx - w / 2 - 46, cy); ctx.textAlign = 'center'; } else ctx.fillText(s, cx, cy - 34);
+    ctx.fillStyle = '#1c1c1e'; ctx.beginPath(); ctx.roundRect(cx - w / 2, cy - h / 2, w, h, h / 2); ctx.fill();
+    ctx.strokeStyle = '#3a3a3c'; ctx.lineWidth = 1.5; ctx.stroke();
+    ctx.strokeStyle = '#636366'; ctx.beginPath(); ctx.moveTo(cx - 18, cy - h / 2 + 3); ctx.lineTo(cx - 18, cy + h / 2 - 3); ctx.moveTo(cx + 18, cy - h / 2 + 3); ctx.lineTo(cx + 18, cy + h / 2 - 3); ctx.stroke();
+    const bx = cx - clamp(tilt / 82, -1, 1) * (w / 2 - 18); // the bubble floats uphill, opposite to the tilt
+    ctx.fillStyle = safe ? '#34c759' : '#e5e5ea'; ctx.beginPath(); ctx.ellipse(bx, cy, 14, 9, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.font = `600 11px ${getComputedStyle(document.documentElement).getPropertyValue('--ui')}`; ctx.fillStyle = '#8e8e93';
+    ctx.fillText('後ろ', cx - w / 2 - 20, cy); ctx.fillText('前', cx + w / 2 + 14, cy);
+  }
+  function drawArena(t) {
+    const g = ctx.createLinearGradient(0, 0, 0, H); g.addColorStop(0, '#0b0b0d'); g.addColorStop(1, '#151518');
+    ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+    // a faint protractor around the player's feet: the angles that matter
+    ctx.save(); ctx.translate(X(0), Y(0));
+    ctx.strokeStyle = '#2c2c2e'; ctx.lineWidth = 1;
+    for (let d = -80; d <= 80; d += 10) { const a = (d - 90) * D2R, r1 = 2.05 * sc, r2 = (d % 30 ? 2.12 : 2.2) * sc;
+      ctx.beginPath(); ctx.moveTo(Math.cos(a) * r1, Math.sin(a) * r1); ctx.lineTo(Math.cos(a) * r2, Math.sin(a) * r2); ctx.stroke(); }
+    ctx.beginPath(); ctx.arc(0, 0, 2.05 * sc, -170 * D2R, -10 * D2R); ctx.stroke();
+    ctx.strokeStyle = '#34c75966'; ctx.lineWidth = 2; ctx.setLineDash([4, 5]);
+    ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(0, -2.2 * sc); ctx.stroke(); ctx.setLineDash([]);
+    ctx.restore();
+    ctx.strokeStyle = '#3a3a3c'; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(0, Y(0) + 1); ctx.lineTo(W, Y(0) + 1); ctx.stroke();
+    ctx.fillStyle = '#0e0e10'; ctx.fillRect(0, Y(0) + 2, W, H);
+  }
+
+  // ============ HUD ============
+  const hpP = $('hpP'), hpE = $('hpE'), notice = $('notice');
+  function updBars(instant) {
+    const set = (el, v) => { el.querySelector('i').style.width = v + '%'; el.querySelector('b').style.width = v + '%'; };
+    set(hpP, player.hp); set(hpE, foe.hp / foe.max * 100);
+  }
+  let sayMsg = '', sayUntil = 0, shownNote = '';
+  function say(m) { sayMsg = m; sayUntil = performance.now() + 1600; }
+  function note(now) {
+    let n = '', warn = false;
+    if (now < sayUntil) n = sayMsg;
+    else if (running && source === 'demo') n = 'センサーなし：画面を左右にドラッグ(または←→キー)で体を倒せます';
+    else if (running && flat) { n = 'スマホを立てて持ってください'; warn = true; }
+    if (n !== shownNote) { shownNote = n; notice.hidden = !n; notice.textContent = n; notice.classList.toggle('warn', warn); }
+  }
+  function end(win) {
+    phase = win ? 'ko' : 'lose'; phaseT = 0;
+    setTimeout(() => {
+      const last = si === STAGES.length - 1;
+      $('endT').textContent = win ? (last ? '完全勝利!' : 'KO!') : 'まけ…';
+      $('endT').style.color = win ? '#34c759' : '#ff3b30';
+      $('endP').textContent = win ? (last ? '3人すべてに勝ちました。傾きの達人です。' : `${S.name}に勝ちました。残り体力 ${player.hp}`) : `${S.name}に負けました。予告の色を見て、倒す向きを変えてみましょう。`;
+      $('next').hidden = !win || last; $('next').textContent = '次の相手へ';
+      $('retry').textContent = win && last ? 'もう一度遊ぶ' : (win ? '最初から' : 'この相手ともう一度');
+      $('retry').onclick = () => startRound(win ? 0 : si);
+      $('end').hidden = false;
+    }, 1300);
+  }
+  $('next').addEventListener('click', () => startRound(si + 1));
+
+  // ============ loop ============
+  let last = performance.now(), T = 0;
+  function frame(now) {
+    const rdt = clamp((now - last) / 1000, 0, 0.033); last = now;
+    slow = Math.max(0, slow - rdt); const dt = rdt * (slow > 0 && !reduce ? 0.35 : 1); T += dt; phaseT += rdt;
+    if (source === 'demo') { if (keys.has('ArrowLeft')) simA = Math.max(-85, simA - 160 * rdt); if (keys.has('ArrowRight')) simA = Math.min(85, simA + 160 * rdt);
+      if (!keys.has('ArrowLeft') && !keys.has('ArrowRight') && !drag && !hold) simA *= Math.pow(0.02, rdt); }
+    tilt = readTilt();
+    stepPlayer(dt, rdt);
+    if (phase === 'intro' && phaseT > 1.6) { phase = 'fight'; phaseT = 0; }
+    if (phase === 'fight') {
+      stepFoe(dt);
+      if (foe.hp <= 0) { end(true); foeSet('hurt', 99); }
+      else if (player.hp <= 0) end(false);
+    }
+    for (const p of pops) p.t += rdt; while (pops.length && pops[0].t > 1.1) pops.shift();
+    for (const s of sparks) { s.t += dt; s.x += s.vx * dt; s.y += s.vy * dt; s.vy -= 9 * dt; } while (sparks.length && sparks[0].t > 0.6) sparks.shift();
+    shake = Math.max(0, shake - rdt * 3); redFlash = Math.max(0, redFlash - rdt * 2.5);
+
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    drawArena(T);
+    ctx.save(); if (!reduce && shake > 0) ctx.translate((Math.random() - 0.5) * shake * 16, (Math.random() - 0.5) * shake * 16);
+    drawTelegraph(T); drawFoe(T); drawPlayer(T);
+    for (const s of sparks) { ctx.globalAlpha = 1 - s.t / 0.6; circle([s.x, s.y], 0.035, s.color); } ctx.globalAlpha = 1;
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    for (const p of pops) { ctx.globalAlpha = 1 - Math.max(0, p.t - 0.6) / 0.5; ctx.fillStyle = p.color;
+      ctx.font = `800 ${Math.round(Math.max(16, Math.min(28, W * 0.045)) * p.size)}px ${getComputedStyle(document.documentElement).getPropertyValue('--ui')}`;
+      ctx.fillText(p.text, X(p.x), Y(p.y + p.t * 0.5)); } ctx.globalAlpha = 1;
+    ctx.restore();
+    drawLevel(T);
+    if (redFlash > 0) { ctx.fillStyle = `rgba(255,59,48,${redFlash * 0.28})`; ctx.fillRect(0, 0, W, H); }
+    if (phase === 'intro' || phase === 'ko' || phase === 'lose') {
+      const txt = phase === 'intro' ? (phaseT < 1.0 ? `ROUND ${si + 1}  vs ${S.name}` : 'FIGHT!') : phase === 'ko' ? 'K.O.' : 'DOWN…';
+      ctx.font = `900 ${Math.min(56, W * 0.11)}px ${getComputedStyle(document.documentElement).getPropertyValue('--ui')}`; ctx.textAlign = 'center';
+      ctx.lineWidth = 6; ctx.strokeStyle = '#000'; ctx.strokeText(txt, W / 2, H * 0.48);
+      ctx.fillStyle = phase === 'lose' ? '#ff3b30' : phase === 'ko' ? '#34c759' : '#fff'; ctx.fillText(txt, W / 2, H * 0.48);
+    }
+    note(now);
+    requestAnimationFrame(frame);
+  }
+
+  async function start() {
+    if (start.busy) return; start.busy = true; $('gate').hidden = true;
+    const asks = [];
+    if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function')
+      asks.push(DeviceMotionEvent.requestPermission().catch(() => 'denied'));
+    if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function')
+      asks.push(DeviceOrientationEvent.requestPermission().catch(() => 'denied'));
+    window.addEventListener('deviceorientation', onOrient);
+    window.addEventListener('devicemotion', onMotion);
+    try { if (navigator.wakeLock) navigator.wakeLock.request('screen').catch(() => {}); } catch (_) {}
+    ref = null; running = true; startRound(0);
+    const res = await Promise.all(asks);
+    const ok = res.some(r => r === 'granted') || asks.length === 0;
+    setTimeout(() => { if (!alive) source = 'demo'; }, ok ? 1500 : 0);
+  }
+  $('gate').addEventListener('click', start);
+  $('gate').addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); start(); } });
+  requestAnimationFrame(frame);
+
+  // test hooks
+  window.__fight = { player, foe, ATK, get phase() { return phase; }, setTilt: v => { simA = v; hold = true; }, hitsPlayer, body, strikePos,
+    force: (atk) => { foe.atk = atk; foe.feinted = true; foeSet('wind', 0.6); } };
+})();
+</script>
+</body></html>
