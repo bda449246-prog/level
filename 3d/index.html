@@ -340,7 +340,7 @@ body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--font);overf
   let lastTxt = '', last = performance.now(), textRot = 0, textRotTarget = 0;
   setUnit(unit); updTBtn();
   function frame(t) {
-    const dt = Math.min(0.05, (t - last) / 1000); last = t;
+    const dt = Math.max(0, Math.min(0.05, (t - last) / 1000)); last = t;
     const fused = source === 'motion' && q;
     const target = source === 'demo' ? simVector() : raw;
     if (fused) g = qInvRot(q, [0, 0, -1]);
