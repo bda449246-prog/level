@@ -1,4 +1,4 @@
-<!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-status-bar-style" content="black"><style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);box-sizing:border-box;height:100%}[hidden]{display:none!important}</style></head><body>
+<!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-status-bar-style" content="black"><meta name="apple-mobile-web-app-title" content="立体水準器"><meta name="theme-color" content="#000000"><link rel="manifest" href="manifest.webmanifest"><link rel="apple-touch-icon" href="icon-180.png"><style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);box-sizing:border-box;height:100%}[hidden]{display:none!important}</style></head><body>
 <title>立体水準器</title>
 <meta name="claude:viewport-fit-sides" content="cover">
 <style>
@@ -17,11 +17,29 @@ body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--font);overf
 #app.level{background:var(--level)}
 #app.ref{background:var(--ref)}
 #read{flex:none;text-align:center;padding:calc(18px + env(safe-area-inset-top,0px)) 16px 4px;pointer-events:none}
-#num{font-weight:200;font-size:clamp(56px,17vmin,120px);line-height:1;font-variant-numeric:tabular-nums;letter-spacing:-1px}
-#num .deg{display:inline-block;width:0;overflow:visible}
+#num{display:inline-block;font-weight:200;font-size:clamp(56px,17vmin,120px);line-height:1;font-variant-numeric:tabular-nums;letter-spacing:-1px;will-change:transform}
+#num .unit{display:inline-block;width:0;overflow:visible}
+#num .unit.wide{width:auto;font-size:.36em;font-weight:400;margin-left:.15em;letter-spacing:0}
 #axes{margin-top:8px;display:flex;justify-content:center;gap:18px;font-size:13px;color:rgba(255,255,255,.72);font-variant-numeric:tabular-nums}
 #axes b{font-weight:600;color:#fff;margin-left:4px}
 #mode{margin-top:6px;font-size:12px;color:rgba(255,255,255,.6)}
+#mode.hit{color:#fff;font-weight:600}
+.btn{appearance:none;border:0;background:var(--pill);color:var(--fg);font:500 13px var(--font);padding:8px 12px;border-radius:9px;cursor:pointer}
+.btn.on{background:var(--level);color:#000;font-weight:600}
+.btn:focus-visible{outline:2px solid var(--level);outline-offset:2px}
+#sheet{position:fixed;inset:0;display:flex;align-items:flex-end;justify-content:center;background:rgba(0,0,0,.55);z-index:5}
+#sheet .card{box-sizing:border-box;width:min(440px,100%);background:#1c1c1e;border-radius:20px 20px 0 0;padding:18px 18px calc(18px + env(safe-area-inset-bottom,0px))}
+#sheet h2{margin:0 0 4px;font-size:17px}
+#sheet p{margin:0 0 12px;font-size:12.5px;color:#aeaeb2;line-height:1.5}
+.row{display:flex;gap:8px;align-items:center;margin-bottom:12px}
+#tIn{flex:1;min-width:0;font:300 30px var(--font);color:#fff;background:#2c2c2e;border:0;border-radius:12px;padding:8px 12px;font-variant-numeric:tabular-nums}
+#tIn:focus{outline:2px solid var(--level)}
+#tUnit{font-size:17px;color:#d1d1d6;min-width:3em}
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px}
+.chips .btn{background:#2c2c2e;padding:7px 11px}
+.acts{display:flex;gap:8px}.acts .btn{flex:1;padding:12px;font-size:15px}
+#tSet{background:var(--level);color:#000;font-weight:700}
+#gyro{position:absolute;top:8px;right:12px;font-size:11px;color:rgba(255,255,255,.55);pointer-events:none}
 #stage{position:relative;flex:1;min-height:0;touch-action:none;cursor:pointer}
 #cv{position:absolute;inset:0;width:100%;height:100%;display:block}
 #bar{flex:none;display:flex;justify-content:center;align-items:center;gap:10px;flex-wrap:wrap;padding:6px 16px calc(12px + env(safe-area-inset-bottom,0px))}
@@ -47,7 +65,7 @@ body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--font);overf
 
 <div id="app">
   <div id="read" aria-live="off">
-    <div id="num">0.0<span class="deg">°</span></div>
+    <div id="num"><span id="numV">0.0</span><span class="unit" id="numU">°</span></div>
     <div id="axes"><span>左右<b id="ax">0.0°</b></span><span>前後<b id="ay">0.0°</b></span></div>
     <div id="mode">平置き</div>
   </div>
@@ -55,6 +73,7 @@ body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--font);overf
     <canvas id="cv"></canvas>
     <div id="demoNote" hidden>モーションセンサーを使えない環境です。ドラッグすると傾きを再現できます。</div>
     <div id="hint">タップで基準を設定 ・ ドラッグで視点を回転</div>
+    <div id="gyro" hidden></div>
   </div>
   <div id="bar">
     <div class="seg" role="group" aria-label="視点">
@@ -62,10 +81,25 @@ body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--font);overf
       <button type="button" data-v="tilt" aria-pressed="true">斜め</button>
       <button type="button" data-v="side" aria-pressed="false">横</button>
     </div>
+    <div class="seg" role="group" aria-label="単位">
+      <button type="button" data-u="deg" aria-pressed="true">°</button>
+      <button type="button" data-u="pct" aria-pressed="false">%</button>
+      <button type="button" data-u="mmm" aria-pressed="false">mm/m</button>
+    </div>
+    <button class="btn" id="tBtn" type="button" aria-haspopup="dialog">目標</button>
     <div class="seg" role="group" aria-label="デモの向き" id="demoSeg" hidden>
       <button type="button" data-d="flat" aria-pressed="true">平置き</button>
       <button type="button" data-d="up" aria-pressed="false">立てる</button>
     </div>
+  </div>
+</div>
+<div id="sheet" hidden role="dialog" aria-modal="true" aria-labelledby="tTitle">
+  <div class="card">
+    <h2 id="tTitle">目標の角度</h2>
+    <p>この角度になると画面が緑になります。基準を設定しているときは、基準からの角度が目標になります。</p>
+    <div class="row"><input id="tIn" type="number" inputmode="decimal" step="0.1" min="0" aria-label="目標の値"><span id="tUnit">°</span></div>
+    <div class="chips" id="tChips"></div>
+    <div class="acts"><button class="btn" id="tOff" type="button">目標なし</button><button class="btn" id="tSet" type="button">設定</button></div>
   </div>
 </div>
 <div id="gate" role="button" tabindex="0" aria-label="タップして立体水準器を開始">
@@ -73,7 +107,7 @@ body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--font);overf
   <span id="start">タップして開始</span>
 </div>
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="three.min.js"></script>
 <script>
 (() => {
   const D2R = Math.PI / 180, R2D = 180 / Math.PI;
@@ -94,6 +128,41 @@ body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--font);overf
     const v = [a.x / n, a.y / n, a.z / n];
     if (lastOrient) { const d = v[1] * lastOrient[1] + v[2] * lastOrient[2]; if (Math.abs(d) > 0.3) vote = Math.max(-40, Math.min(40, vote + (d > 0 ? 1 : -1))); }
     const s = vote >= 0 ? 1 : -1; raw = [v[0] * s, v[1] * s, v[2] * s]; source = 'motion'; alive = true;
+    fuse(raw, n / 9.81, e.rotationRate);
+  }
+
+  // ---------- gyro fusion ----------
+  // The attitude q (device → world, world z up) is integrated from the gyroscope, and gravity from the accelerometer
+  // slowly pulls it back (a complementary / Mahony filter). The gyro gives a fast, steady surface while the phone moves;
+  // the accelerometer keeps it true over time. The gyro's sign is checked against the accelerometer before it is trusted.
+  let q = null, gyroVote = 0, gyroOK = false, prevA = null, lastFuse = 0, gyroSeen = false;
+  const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+  const qMul = (a, b) => [a[0] * b[0] - a[1] * b[1] - a[2] * b[2] - a[3] * b[3], a[0] * b[1] + a[1] * b[0] + a[2] * b[3] - a[3] * b[2],
+    a[0] * b[2] - a[1] * b[3] + a[2] * b[0] + a[3] * b[1], a[0] * b[3] + a[1] * b[2] - a[2] * b[1] + a[3] * b[0]];
+  const qN = a => { const n = Math.hypot(...a) || 1; return a.map(v => v / n); };
+  const qInvRot = (q, v) => { const c = [q[0], -q[1], -q[2], -q[3]], r = qMul(qMul(c, [0, ...v]), q); return [r[1], r[2], r[3]]; };   // world → device
+  function qFromTo(u, v) { const d = dot(u, v); if (d < -0.9999) return [0, 1, 0, 0]; const c = cross(u, v); return qN([1 + d, ...c]); }
+  function fuse(a, gN, rr) {
+    const now = performance.now(), dt = lastFuse ? Math.min(0.1, (now - lastFuse) / 1000) : 0; lastFuse = now;
+    if (!q) { q = qFromTo(a, [0, 0, -1]); prevA = a; return; }
+    let w = [0, 0, 0];
+    if (rr && rr.alpha != null && rr.beta != null && rr.gamma != null) {
+      gyroSeen = true;
+      const raw = [rr.beta * D2R, rr.gamma * D2R, rr.alpha * D2R];
+      // sign check: the change gravity should show for this rotation vs. the change the accelerometer saw
+      const da = [a[0] - prevA[0], a[1] - prevA[1], a[2] - prevA[2]], pred = cross(a, raw);
+      if (Math.hypot(...raw) > 0.6 && Math.hypot(...da) > 0.004 && Math.abs(gN - 1) < 0.15) {
+        const d = dot(pred, da); if (Math.abs(d) > 1e-6) gyroVote = Math.max(-30, Math.min(30, gyroVote + (d > 0 ? 1 : -1)));
+      }
+      if (!gyroOK && Math.abs(gyroVote) >= 6) gyroOK = true;
+      if (gyroOK) { const sg = gyroVote >= 0 ? 1 : -1; w = raw.map(v => v * sg); }
+    }
+    prevA = a;
+    const dPred = qInvRot(q, [0, 0, -1]), err = cross(a, dPred);
+    const trust = Math.exp(-Math.pow((gN - 1) / 0.08, 2));                  // ignore the accelerometer while it is being shaken
+    const kp = gyroOK ? 1.4 * trust : 6;                                     // without a gyro, follow gravity like the classic level
+    const wt = [w[0] + kp * err[0], w[1] + kp * err[1], w[2] + kp * err[2]];
+    q = qN(qMul(q, [1, wt[0] * dt / 2, wt[1] * dt / 2, wt[2] * dt / 2]));
   }
   function screenAngle() { const a = (screen.orientation && typeof screen.orientation.angle === 'number') ? screen.orientation.angle
     : (typeof window.orientation === 'number' ? window.orientation : 0); return a * D2R; }
@@ -104,7 +173,8 @@ body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--font);overf
   function simVector() {
     const ax = simY * D2R, ay = simX * D2R;
     let v = demoBase === 'flat' ? [0, 0, -1] : [0, -1, 0];
-    v = [v[0] * Math.cos(ay) + v[2] * Math.sin(ay), v[1], -v[0] * Math.sin(ay) + v[2] * Math.cos(ay)];          // about y (left/right)
+    if (demoBase === 'flat') v = [v[0] * Math.cos(ay) + v[2] * Math.sin(ay), v[1], -v[0] * Math.sin(ay) + v[2] * Math.cos(ay)];  // about y (left/right)
+    else v = [v[0] * Math.cos(ay) - v[1] * Math.sin(ay), v[0] * Math.sin(ay) + v[1] * Math.cos(ay), v[2]];                           // upright: roll about z
     v = [v[0], v[1] * Math.cos(ax) - v[2] * Math.sin(ax), v[1] * Math.sin(ax) + v[2] * Math.cos(ax)];            // about x (front/back)
     return norm(v);
   }
@@ -226,14 +296,55 @@ body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--font);overf
 
   // ---------- loop ----------
   const fmt = v => { let s = (Math.round(v * 10) / 10).toFixed(1); if (s === '-0.0') s = '0.0'; return s; };
+  // ---------- units ----------
+  const UNITS = { deg: { s: '°', wide: false }, pct: { s: '%', wide: true }, mmm: { s: 'mm/m', wide: true } };
+  let unit = 'deg';
+  try { const u = localStorage.getItem('l3unit'); if (UNITS[u]) unit = u; } catch (_) {}
+  const conv = (deg, u = unit) => u === 'deg' ? deg : Math.tan(deg * D2R) * (u === 'pct' ? 100 : 1000);
+  const unconv = (v, u = unit) => u === 'deg' ? v : Math.atan(v / (u === 'pct' ? 100 : 1000)) * R2D;
+  function fmtU(deg, u = unit) { if (u !== 'deg' && Math.abs(deg) >= 89.5) return '—'; const v = conv(deg, u);
+    if (u === 'mmm' && Math.abs(v) >= 100) { const s = String(Math.round(v)); return s === '-0' ? '0' : s; } return fmt(v); }
+  const numU = $('numU');
+  function setUnit(u) { unit = u; try { localStorage.setItem('l3unit', u); } catch (_) {}
+    document.querySelectorAll('[data-u]').forEach(b => b.setAttribute('aria-pressed', b.dataset.u === u));
+    numU.textContent = UNITS[u].s; numU.classList.toggle('wide', UNITS[u].wide); lastTxt = ''; }
+  document.querySelectorAll('[data-u]').forEach(b => b.addEventListener('click', () => setUnit(b.dataset.u)));
+
+  // ---------- target angle ----------
+  let targetDeg = null;
+  try { const t = parseFloat(localStorage.getItem('l3target')); if (isFinite(t)) targetDeg = t; } catch (_) {}
+  const sheet = $('sheet'), tIn = $('tIn'), tBtn = $('tBtn');
+  const PRESETS = [1, 2, 5, 10, 15, 30, 45];
+  function updTBtn() { tBtn.textContent = targetDeg == null ? '目標' : `目標 ${fmtU(targetDeg)}${UNITS[unit].s}`; tBtn.classList.toggle('on', targetDeg != null); }
+  function openSheet() {
+    $('tUnit').textContent = UNITS[unit].s;
+    tIn.value = targetDeg != null ? fmtU(targetDeg) : '';
+    const chips = $('tChips'); chips.innerHTML = '';
+    const add = (label, fn) => { const b = document.createElement('button'); b.type = 'button'; b.className = 'btn'; b.textContent = label; b.addEventListener('click', fn); chips.appendChild(b); };
+    add('いまの角度', () => { tIn.value = fmtU(Math.abs(lastValue)); });
+    PRESETS.forEach(d => add(unit === 'deg' ? d + '°' : `${d}°(${fmtU(d)}${UNITS[unit].s})`, () => { tIn.value = fmtU(d); }));
+    sheet.hidden = false; setTimeout(() => tIn.focus(), 50);
+  }
+  function closeSheet() { sheet.hidden = true; tBtn.focus(); }
+  function saveTarget(v) { targetDeg = v; try { v == null ? localStorage.removeItem('l3target') : localStorage.setItem('l3target', String(v)); } catch (_) {} updTBtn(); }
+  tBtn.addEventListener('click', openSheet);
+  $('tSet').addEventListener('click', () => { const v = parseFloat(tIn.value); if (isFinite(v)) saveTarget(Math.min(89, Math.abs(unconv(v)))); closeSheet(); });
+  $('tOff').addEventListener('click', () => { saveTarget(null); closeSheet(); });
+  sheet.addEventListener('click', e => { if (e.target === sheet) closeSheet(); });
+  sheet.addEventListener('keydown', e => { if (e.key === 'Escape') closeSheet(); if (e.key === 'Enter') $('tSet').click(); });
+  ['pointerdown', 'pointerup'].forEach(ev => sheet.addEventListener(ev, e => e.stopPropagation()));
+  let lastValue = 0;
   let mode = 'flat', shown = 0, shownAt = 0, isLevel = false, gs = [0, 0, -1];
   let sl = [0, 0, -1], slv = [0, 0, 0];   // the sloshing surface normal (follows gravity with a little lag and overshoot)
-  const numEl = $('num'), axEl = $('ax'), ayEl = $('ay'), modeEl = $('mode');
-  let lastTxt = '', last = performance.now();
+  const numEl = $('num'), axEl = $('ax'), ayEl = $('ay'), modeEl = $('mode'), gyroEl = $('gyro');
+  let lastTxt = '', last = performance.now(), textRot = 0, textRotTarget = 0;
+  setUnit(unit); updTBtn();
   function frame(t) {
     const dt = Math.min(0.05, (t - last) / 1000); last = t;
+    const fused = source === 'motion' && q;
     const target = source === 'demo' ? simVector() : raw;
-    if (target) { const a = 1 - Math.exp(-dt / (source === 'demo' ? 0.05 : 0.16)); g = norm([g[0] + (target[0] - g[0]) * a, g[1] + (target[1] - g[1]) * a, g[2] + (target[2] - g[2]) * a]); }
+    if (fused) g = qInvRot(q, [0, 0, -1]);
+    else if (target) { const a = 1 - Math.exp(-dt / (source === 'demo' ? 0.05 : 0.16)); g = norm([g[0] + (target[0] - g[0]) * a, g[1] + (target[1] - g[1]) * a, g[2] + (target[2] - g[2]) * a]); }
     gs = toScreen(g);
     const [x, y, z] = gs;
     const tilt = Math.acos(Math.min(1, Math.abs(z))) * R2D;
@@ -246,14 +357,29 @@ body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--font);overf
     else if (mode === 'flat') value = tilt;
     else { const roll = Math.atan2(-y, x) * R2D - 90; value = -(((roll + 45) % 90 + 90) % 90 - 45); }
     if (Math.abs(value - shown) >= 0.06 || t - shownAt > 400) { shown = value; shownAt = t; }
-    const absv = Math.abs(shown);
-    if (!isLevel && absv < 0.05) isLevel = true; else if (isLevel && absv >= 0.15) isLevel = false;
+    const absv = Math.abs(shown); lastValue = shown;
+    // green when the reading meets the goal: 0 normally, or the target angle when one is set
+    const miss = targetDeg == null ? absv : Math.abs(absv - targetDeg);
+    if (!isLevel && miss < 0.05) isLevel = true; else if (isLevel && miss >= 0.15) isLevel = false;
     app.classList.toggle('level', isLevel); app.classList.toggle('ref', !isLevel && !!ref && mode === 'flat');
-    const txt = fmt(mode === 'flat' || ref ? absv : shown);
-    if (txt !== lastTxt) { lastTxt = txt; numEl.firstChild.textContent = txt; }
-    axEl.textContent = fmt(Math.asin(Math.max(-1, Math.min(1, x))) * R2D) + '°';
-    ayEl.textContent = fmt(Math.asin(Math.max(-1, Math.min(1, y))) * R2D) + '°';
-    modeEl.textContent = ref ? '基準からの角度' : mode === 'flat' ? '平置き' : port ? '立てる(縦)' : '立てる(横)';
+    const txt = fmtU(mode === 'flat' || ref ? absv : shown);
+    if (txt !== lastTxt) { lastTxt = txt; $('numV').textContent = txt; }
+    const sfx = unit === 'deg' ? '°' : UNITS[unit].s;
+    axEl.textContent = fmtU(Math.asin(Math.max(-1, Math.min(1, x))) * R2D) + sfx;
+    ayEl.textContent = fmtU(Math.asin(Math.max(-1, Math.min(1, y))) * R2D) + sfx;
+    let mtxt = ref ? '基準からの角度' : mode === 'flat' ? '平置き' : port ? '立てる(縦)' : '立てる(横)';
+    if (targetDeg != null) { const d = conv(absv) - conv(targetDeg), ds = unit === 'mmm' && Math.abs(d) >= 100 ? String(Math.round(d)) : fmt(d);
+      mtxt += isLevel ? ` ・ 目標 ${fmtU(targetDeg)}${sfx} ぴったり` : ` ・ 目標 ${fmtU(targetDeg)}${sfx} まで ${d > 0 ? '−' : '+'}${ds.replace('-', '')}${sfx}`; }
+    if (modeEl.textContent !== mtxt) modeEl.textContent = mtxt;
+    modeEl.classList.toggle('hit', targetDeg != null && isLevel);
+
+    // the number turns with the horizon when upright, and keeps the way the phone is held when flat (as in the classic level)
+    const roll = Math.atan2(-y, x) * R2D - 90;
+    if (mode === 'up') textRotTarget = roll * D2R; else if (tilt > 22) textRotTarget = Math.round(roll / 90) * 90 * D2R;
+    let dr = textRotTarget - textRot; dr = Math.atan2(Math.sin(dr), Math.cos(dr));
+    textRot += mode === 'up' ? dr : dr * (1 - Math.exp(-dt / 0.12)); textRot = Math.atan2(Math.sin(textRot), Math.cos(textRot));
+    numEl.style.transform = Math.abs(textRot) < 1e-4 ? '' : `rotate(${textRot.toFixed(4)}rad)`;
+    if (fused && String(gyroOK) !== gyroEl.dataset.on) { gyroEl.dataset.on = String(gyroOK); gyroEl.hidden = false; gyroEl.textContent = gyroOK ? 'ジャイロ併用' : 'ジャイロ確認中…'; }
 
     // water: spring the surface normal toward gravity
     if (reduce) sl = gs.slice();
@@ -261,6 +387,12 @@ body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--font);overf
       for (let i = 0; i < 3; i++) { slv[i] += (k * (gs[i] - sl[i]) - c * slv[i]) * dt; sl[i] += slv[i] * dt; } sl = norm(sl); }
     clip.normal.set(sl[0], sl[1], sl[2]); clip.constant = 0;
     orientTo(surface, [-sl[0], -sl[1], -sl[2]]);
+    if (fused && gyroOK) { // keep the surface's pattern still in the real world while the phone turns about the vertical
+      const wx = toScreen(qInvRot(q, [1, 0, 0])), n = new THREE.Vector3(-sl[0], -sl[1], -sl[2]);
+      const xs = new THREE.Vector3(1, 0, 0).applyQuaternion(surface.quaternion), tw = new THREE.Vector3(...wx);
+      tw.sub(n.clone().multiplyScalar(tw.dot(n))); if (tw.lengthSq() > 1e-6) { tw.normalize();
+        surface.rotateZ(Math.atan2(new THREE.Vector3().crossVectors(xs, tw).dot(n), xs.dot(tw))); }
+    }
     // the bubble floats toward the high side of the phone's active plane, as far as the tilt pushes it
     const planeN = ref ? [-ref[0], -ref[1], -ref[2]] : mode === 'flat' ? [0, 0, Math.sign(-z) || 1] : port ? [0, Math.sign(-y) || 1, 0] : [Math.sign(-x) || 1, 0, 0];
     const up = [-sl[0], -sl[1], -sl[2]];
@@ -289,7 +421,8 @@ body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--font);overf
     requestAnimationFrame(frame);
   }
   requestAnimationFrame(frame);
-  window.__l3 = { set: (sx, sy, base) => { if (base) demoBase = base; simX = sx; simY = sy; }, tapRef: () => { ref = ref ? null : gs.slice(); }, view: v => document.querySelector(`[data-v="${v}"]`).click() };
+  if ('serviceWorker' in navigator && window.isSecureContext && location.protocol !== 'file:') navigator.serviceWorker.register('sw.js').catch(() => {});
+  window.__l3 = { get q() { return q; }, get gyroOK() { return gyroOK; }, get gyroVote() { return gyroVote; }, unit: setUnit, target: saveTarget,  set: (sx, sy, base) => { if (base) demoBase = base; simX = sx; simY = sy; }, tapRef: () => { ref = ref ? null : gs.slice(); }, view: v => document.querySelector(`[data-v="${v}"]`).click() };
 })();
 </script>
 </body></html>
