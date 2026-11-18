@@ -1,0 +1,2535 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>ORBITAL LEVEL SYNTH — 軌道水準器シンセ</title>
+    <style>
+        :root {
+            --color-normal: #10b981;
+            --color-side: #ef4444;
+            --active-band-color: #10b981;
+            --bg-black: #000000;
+            --overlay-color: rgba(0, 0, 0, 0);
+        }
+
+        * {
+            box-sizing: border-box;
+            -webkit-tap-highlight-color: transparent;
+            user-select: none;
+            -webkit-user-select: none;
+        }
+
+        html, body {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            height: 100vh;
+            height: 100dvh;
+            overflow: hidden;
+            background-color: var(--bg-black);
+            color: #ffffff;
+            font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", Roboto, sans-serif;
+            touch-action: none;
+            -webkit-text-size-adjust: 100%;
+            transition: background-color 0.2s ease;
+        }
+
+        /* 横持ち対応ステージ */
+        #landscape-stage {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            width: 100vw;
+            height: 100vh;
+            transform: translate(-50%, -50%);
+            transform-origin: center center;
+            overflow: hidden;
+            background-color: transparent;
+        }
+
+        /* ARカメラ背景 & 色透かしオーバーレイ */
+        #camera-bg {
+            position: fixed;
+            top: 0; left: 0;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            z-index: -2;
+            display: none;
+        }
+
+        #color-overlay {
+            position: absolute;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background-color: var(--overlay-color);
+            transition: background-color 0.2s ease;
+            z-index: 0;
+            pointer-events: none;
+        }
+
+        /* 方眼グリッド（2軸追従） */
+        .grid {
+            position: absolute;
+            top: -50%;
+            left: -50%;
+            width: 200%;
+            height: 200%;
+            background-image:
+                linear-gradient(rgba(255, 255, 255, 0.055) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(255, 255, 255, 0.055) 1px, transparent 1px);
+            background-size: 40px 40px;
+            z-index: 1;
+            pointer-events: none;
+        }
+
+        /* 現実の水平水面（傾きに合わせて2D揺動） */
+        #sea-level {
+            position: absolute;
+            top: 50%;
+            left: -50%;
+            width: 200%;
+            height: 200%;
+            background: linear-gradient(to bottom,
+                rgba(255, 255, 255, 0.14) 0%,
+                rgba(255, 255, 255, 0.03) 14%,
+                rgba(255, 255, 255, 0.0) 45%);
+            border-top: 1.5px solid rgba(255, 255, 255, 0.45);
+            transform-origin: top center;
+            z-index: 2;
+            pointer-events: none;
+            transition: border-color 0.18s ease;
+        }
+
+        /* 花びら型オービタルボード */
+        #orbital-board-wrap {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 0;
+            height: 0;
+            z-index: 4;
+            pointer-events: none;
+            will-change: transform;
+        }
+
+        #orbital-svg {
+            position: absolute;
+            overflow: visible;
+            transform: translate(-50%, -50%);
+        }
+
+        .petal-path {
+            transition: fill 0.14s ease, stroke 0.14s ease, stroke-width 0.14s ease;
+        }
+
+        @keyframes practiceTargetPulse {
+            0%, 100% { filter: drop-shadow(0 0 6px rgba(255, 255, 255, 0.72)); }
+            50% { filter: drop-shadow(0 0 16px rgba(255, 240, 145, 0.98)); }
+        }
+
+        .petal-path.practice-target {
+            animation: practiceTargetPulse 1.1s ease-in-out infinite;
+        }
+
+        .petal-label {
+            font-size: 11px;
+            font-weight: 700;
+            fill: rgba(255, 255, 255, 0.56);
+            text-anchor: middle;
+            dominant-baseline: central;
+            pointer-events: none;
+            text-shadow: 0 1px 4px rgba(0, 0, 0, 0.9);
+            transition: fill 0.12s ease;
+        }
+
+        .petal-label.active {
+            fill: #ffffff;
+            font-size: 12.5px;
+        }
+
+        @keyframes rippleExpand {
+            0% { transform: scale(0.95); opacity: 0.9; stroke-width: 5px; }
+            100% { transform: scale(1.22); opacity: 0; stroke-width: 1px; }
+        }
+
+        .ripple-ring {
+            transform-origin: 0px 0px;
+            animation: rippleExpand 0.55s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+            pointer-events: none;
+        }
+
+        /* 中心固定：0°基準＆角度・音階HUD（絶対に消えない） */
+        #center-hud {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 116px;
+            height: 116px;
+            border-radius: 50%;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            background: radial-gradient(circle, rgba(10, 14, 20, 0.52) 0%, rgba(10, 14, 20, 0.22) 72%, transparent 100%);
+            border: 1.5px solid rgba(255, 255, 255, 0.28);
+            box-shadow: 0 0 24px rgba(0, 0, 0, 0.45);
+            z-index: 16;
+            pointer-events: none;
+            transition: border-color 0.16s ease, background 0.16s ease;
+        }
+
+        #angle-text {
+            color: #ffffff;
+            font-size: 2.35rem;
+            font-weight: 300;
+            line-height: 1;
+            letter-spacing: -0.02em;
+            text-shadow:
+                -1.5px 0 3px rgba(0, 220, 255, 0.55),
+                1.5px 0 3px rgba(255, 80, 110, 0.55),
+                0 3px 12px rgba(0, 0, 0, 0.85);
+        }
+
+        #note-readout {
+            margin-top: 3px;
+            font-size: 0.84rem;
+            font-weight: 700;
+            letter-spacing: 0.05em;
+            color: rgba(255, 255, 255, 0.96);
+            text-shadow: 0 2px 8px rgba(0, 0, 0, 0.9);
+            white-space: nowrap;
+        }
+
+        #state-pill {
+            margin-top: 4px;
+            padding: 2px 8px;
+            border-radius: 999px;
+            font-size: 0.54rem;
+            font-weight: 700;
+            letter-spacing: 0.08em;
+            background: rgba(255, 255, 255, 0.14);
+            border: 1px solid rgba(255, 255, 255, 0.24);
+            color: #f8fafc;
+            white-space: nowrap;
+        }
+
+        /* 360°自由に動く水ガラス球＆2つの泡 */
+        #orb-layer {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 0;
+            height: 0;
+            z-index: 12;
+            pointer-events: none;
+        }
+
+        .bubble {
+            position: absolute;
+            width: 82px;
+            height: 82px;
+            margin-left: -41px;
+            margin-top: -41px;
+            border-radius: 50%;
+            background: rgba(255, 255, 255, 0.14);
+            box-shadow:
+                inset -6px -6px 14px rgba(0, 0, 0, 0.35),
+                inset 6px 6px 14px rgba(255, 255, 255, 0.38),
+                0 6px 18px rgba(0, 0, 0, 0.25);
+            background-image: radial-gradient(circle at 30% 28%, rgba(255, 255, 255, 0.55) 0%, transparent 45%);
+            transition: background-color 0.16s ease;
+        }
+
+        #liquid-orb {
+            position: absolute;
+            width: 74px;
+            height: 78px;
+            margin-left: -37px;
+            margin-top: -39px;
+            border-radius: 48% 52% 50% 50% / 44% 44% 56% 56%;
+            background: radial-gradient(circle at 30% 25%, rgba(255, 255, 255, 0.26), rgba(0, 0, 0, 0.22) 65%, rgba(255, 255, 255, 0.12));
+            backdrop-filter: blur(6px) saturate(140%);
+            -webkit-backdrop-filter: blur(6px) saturate(140%);
+            box-shadow:
+                inset 2.5px 0 7px rgba(0, 225, 255, 0.55),
+                inset -2.5px 0 7px rgba(255, 70, 140, 0.55),
+                inset 0 3px 9px rgba(255, 255, 255, 0.5),
+                inset 0 -6px 12px rgba(0, 0, 0, 0.5),
+                0 8px 24px rgba(0, 0, 0, 0.55);
+            border: 1.5px solid rgba(255, 255, 255, 0.42);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        #charge-ring-svg {
+            position: absolute;
+            width: 92px;
+            height: 92px;
+            transform: rotate(-90deg);
+            pointer-events: none;
+        }
+
+        /* 画面外方向の目標を示すエッジインジケーター */
+        #edge-compass {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 14px;
+            height: 14px;
+            margin-left: -7px;
+            margin-top: -7px;
+            border-radius: 50%;
+            background: #ffffff;
+            box-shadow: 0 0 12px #ffffff, 0 0 22px var(--active-band-color);
+            z-index: 15;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.15s ease;
+        }
+
+        /* 水平基準ガイド線 */
+        .horizon-ticks {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 88%;
+            max-width: 720px;
+            transform: translate(-50%, -50%);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            z-index: 10;
+            pointer-events: none;
+        }
+
+        .tick-line {
+            width: 24px;
+            height: 2px;
+            background: rgba(255, 255, 255, 0.5);
+            border-radius: 2px;
+        }
+
+        /* 上部フローティングコントロール */
+        #top-controls {
+            position: absolute;
+            top: 10px;
+            left: 0;
+            width: 100%;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 0 10px;
+            z-index: 50;
+            pointer-events: none;
+            gap: 5px;
+            flex-wrap: wrap;
+        }
+
+        .pill-group {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            pointer-events: auto;
+            flex-wrap: wrap;
+        }
+
+        .glass-btn {
+            pointer-events: auto;
+            background: rgba(20, 22, 28, 0.72);
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.24);
+            color: #ffffff;
+            padding: 5px 9px;
+            border-radius: 999px;
+            font-size: 0.67rem;
+            font-weight: 600;
+            cursor: pointer;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
+            display: inline-flex;
+            align-items: center;
+            gap: 3px;
+            white-space: nowrap;
+            touch-action: manipulation;
+        }
+
+        .glass-btn:active { transform: scale(0.94); background: rgba(255, 255, 255, 0.28); }
+        .glass-btn.active { background: rgba(16, 185, 129, 0.42); border-color: rgba(16, 185, 129, 0.9); }
+
+        select.glass-btn {
+            appearance: none;
+            -webkit-appearance: none;
+            outline: none;
+            padding-right: 11px;
+        }
+        select.glass-btn option { background: #111827; color: #ffffff; }
+
+        /* 3モード切替セグメントピル */
+        .mode-switch {
+            display: inline-flex;
+            align-items: center;
+            padding: 2px;
+            border-radius: 999px;
+            background: rgba(20, 22, 28, 0.76);
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.24);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
+            pointer-events: auto;
+            gap: 1px;
+        }
+
+        .mode-btn {
+            background: transparent;
+            border: none;
+            color: rgba(255, 255, 255, 0.72);
+            padding: 4px 8px;
+            border-radius: 999px;
+            font-size: 0.66rem;
+            font-weight: 700;
+            cursor: pointer;
+            white-space: nowrap;
+            touch-action: manipulation;
+        }
+        .mode-btn:active { transform: scale(0.94); }
+        .mode-btn.active {
+            background: rgba(16, 185, 129, 0.46);
+            color: #ffffff;
+            box-shadow: inset 0 0 0 1px rgba(16, 185, 129, 0.92);
+        }
+
+        /* 練習モード用の控えめなステップガイド（空きスペース左上に配置し盤面に被らない） */
+        #practice-guide {
+            position: absolute;
+            top: 48px;
+            left: 12px;
+            padding: 4px 11px;
+            border-radius: 999px;
+            background: rgba(15, 23, 42, 0.74);
+            backdrop-filter: blur(8px);
+            -webkit-backdrop-filter: blur(8px);
+            border: 1px solid rgba(255, 255, 255, 0.24);
+            font-size: 0.68rem;
+            font-weight: 700;
+            color: #f8fafc;
+            display: none;
+            align-items: center;
+            gap: 6px;
+            z-index: 45;
+            pointer-events: none;
+            white-space: nowrap;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+        }
+
+        /* 下部フローティング・ガラスピル（5音色＋操作可能な響きスライダー） */
+        #bottom-bar {
+            position: absolute;
+            bottom: 10px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            z-index: 60;
+            max-width: 96%;
+        }
+
+        #bottom-dock {
+            display: flex;
+            align-items: center;
+            gap: 2px;
+            padding: 4px;
+            border-radius: 999px;
+            background: rgba(20, 20, 26, 0.78);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.22);
+            box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.22), 0 8px 24px rgba(0, 0, 0, 0.6);
+            overflow-x: auto;
+        }
+
+        .preset-pill {
+            background: transparent;
+            border: none;
+            color: rgba(255, 255, 255, 0.72);
+            padding: 6px 10px;
+            border-radius: 999px;
+            font-size: 0.71rem;
+            font-weight: 600;
+            cursor: pointer;
+            white-space: nowrap;
+            touch-action: manipulation;
+        }
+
+        .preset-pill:active { transform: scale(0.95); }
+        .preset-pill.active {
+            background: rgba(255, 255, 255, 0.26);
+            color: #ffffff;
+            box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.45);
+        }
+
+        #space-control {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 0.64rem;
+            font-weight: 600;
+            color: rgba(255, 255, 255, 0.85);
+            background: rgba(20, 20, 26, 0.78);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            padding: 6px 10px;
+            border-radius: 999px;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            white-space: nowrap;
+        }
+
+        #space-slider {
+            width: 56px;
+            height: 4px;
+            accent-color: #10b981;
+            cursor: pointer;
+            margin: 0;
+        }
+
+        /* スタートオーバーレイ */
+        #start-overlay {
+            position: absolute;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(5, 8, 14, 0.92);
+            z-index: 200;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 10px;
+            pointer-events: auto;
+        }
+
+        .start-card {
+            max-width: 580px;
+            width: 100%;
+            max-height: calc(100% - 8px);
+            overflow-y: auto;
+            background: rgba(255, 255, 255, 0.07);
+            border: 1px solid rgba(255, 255, 255, 0.18);
+            border-radius: 22px;
+            padding: 14px 18px;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            box-shadow: 0 18px 45px rgba(0, 0, 0, 0.75);
+        }
+
+        .guide-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 6px 12px;
+            font-size: 0.72rem;
+            line-height: 1.4;
+            color: rgba(255, 255, 255, 0.86);
+            text-align: left;
+        }
+
+        .start-actions {
+            margin-top: 2px;
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 7px;
+        }
+
+        .start-mode-btn {
+            padding: 11px 8px;
+            border-radius: 999px;
+            font-size: 0.83rem;
+            font-weight: 800;
+            cursor: pointer;
+            white-space: nowrap;
+            touch-action: manipulation;
+            border: 1px solid rgba(255, 255, 255, 0.28);
+            background: rgba(255, 255, 255, 0.12);
+            color: #ffffff;
+        }
+        .start-mode-btn:active { transform: scale(0.97); }
+        .start-mode-btn.primary {
+            background: linear-gradient(135deg, #ffffff 0%, #d1fae5 100%);
+            border: none;
+            color: #020617;
+            box-shadow: 0 6px 20px rgba(16, 185, 129, 0.35);
+        }
+        .start-mode-btn.demo {
+            background: rgba(56, 189, 248, 0.2);
+            border-color: rgba(56, 189, 248, 0.65);
+            color: #e0f2fe;
+        }
+        .start-mode-btn.practice {
+            background: rgba(16, 185, 129, 0.22);
+            border-color: rgba(16, 185, 129, 0.72);
+            color: #d1fae5;
+        }
+
+        #toast {
+            position: absolute;
+            top: 52px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(15, 23, 42, 0.92);
+            color: #ffffff;
+            padding: 6px 16px;
+            border-radius: 999px;
+            font-size: 0.73rem;
+            display: none;
+            z-index: 300;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            white-space: nowrap;
+            pointer-events: none;
+        }
+
+        #error-banner {
+            position: fixed;
+            bottom: 8px;
+            left: 8px;
+            right: 8px;
+            background: rgba(185, 28, 28, 0.95);
+            color: #fff;
+            padding: 8px 12px;
+            border-radius: 10px;
+            font-size: 12px;
+            z-index: 999;
+            display: none;
+        }
+
+        /* ===== 改良版で追加: 設定パネル・はじめかた・ガイド ===== */
+        #settings-btn.active { background: rgba(255,255,255,0.28); }
+        #settings-panel {
+            position: absolute; top: 52px; right: 10px; z-index: 120; width: min(320px, calc(100% - 20px));
+            max-height: calc(100% - 64px); overflow-y: auto;
+            background: rgba(14, 16, 22, 0.94); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+            border: 1px solid rgba(255,255,255,0.18); border-radius: 18px; padding: 12px 14px;
+            display: none; flex-direction: column; gap: 10px; box-shadow: 0 16px 40px rgba(0,0,0,0.6);
+        }
+        #settings-panel.open { display: flex; }
+        .set-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 0.8rem; color: rgba(255,255,255,0.9); }
+        .set-row small { display: block; font-size: 0.66rem; color: rgba(255,255,255,0.55); margin-top: 1px; }
+        .set-seg { display: inline-flex; background: rgba(255,255,255,0.08); border-radius: 10px; padding: 2px; flex: none; }
+        .set-seg button { appearance: none; border: 0; background: transparent; color: #fff; font: 600 0.72rem inherit; font-family: inherit; padding: 6px 9px; border-radius: 8px; cursor: pointer; }
+        .set-seg button.on { background: rgba(255,255,255,0.22); }
+        #settings-panel #space-control { position: static; transform: none; margin: 0; }
+        #settings-panel h3 { margin: 0; font-size: 0.86rem; }
+        .steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+        .step { background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.12); border-radius: 14px; padding: 8px 8px 9px; text-align: center; font-size: 0.7rem; line-height: 1.45; color: rgba(255,255,255,0.86); }
+        .step svg { display: block; margin: 0 auto 4px; width: 54px; height: 40px; }
+        .step b { display: block; font-size: 0.8rem; color: #fff; margin-bottom: 1px; }
+        .hold-tip { font-size: 0.7rem; color: rgba(255,255,255,0.7); text-align: center; margin: 0; }
+        #state-pill { font-size: 0.6rem !important; letter-spacing: 0.02em !important; }
+        #center-hud { pointer-events: auto !important; cursor: pointer; }
+        #center-hud::after { content: "タップで0°"; position: absolute; bottom: -18px; font-size: 0.56rem; color: rgba(255,255,255,0.45); white-space: nowrap; }
+        #guide-line { stroke-dasharray: 6 7; animation: guideflow 0.8s linear infinite; }
+        @keyframes guideflow { to { stroke-dashoffset: -26; } }
+        #song-select.hidden-song { display: none; }
+        @media (prefers-reduced-motion: reduce) { #guide-line { animation: none; } }
+    </style>
+</head>
+<body>
+    <video id="camera-bg" autoplay playsinline muted></video>
+
+    <div id="landscape-stage">
+        <div id="color-overlay"></div>
+        <div class="grid" id="grid"></div>
+        <div id="sea-level"></div>
+
+        <!-- 花びら型 2Dオービタル音階ボード -->
+        <div id="orbital-board-wrap">
+            <svg id="orbital-svg" width="800" height="800" viewBox="-400 -400 800 800"></svg>
+        </div>
+
+        <!-- 左右水平ガイド線 -->
+        <div class="horizon-ticks">
+            <div class="tick-line" id="tick-left"></div>
+            <div class="tick-line" id="tick-right"></div>
+        </div>
+
+        <!-- 360°自由に動く水ガラス球＆2つの泡 -->
+        <div id="orb-layer">
+            <div id="bubble-bottom" class="bubble"></div>
+            <div id="bubble-top" class="bubble"></div>
+            <div id="liquid-orb">
+                <svg id="charge-ring-svg" viewBox="0 0 100 100">
+                    <circle id="charge-arc" cx="50" cy="50" r="44" fill="none" stroke="#ffffff" stroke-width="3.5"
+                            stroke-linecap="round" stroke-dasharray="276.46" stroke-dashoffset="276.46" opacity="0.85"></circle>
+                </svg>
+            </div>
+        </div>
+
+        <!-- 画面外コンパス -->
+        <div id="edge-compass"></div>
+
+        <!-- 中央固定 HUD（角度・音階・状態は消えない） -->
+        <div id="center-hud">
+            <div id="angle-text">0.0°</div>
+            <div id="note-readout">0° 中心</div>
+            <div id="state-pill">傾けて音を選ぶ</div>
+        </div>
+
+        <!-- 上部コントロール -->
+        <div id="top-controls" onpointerdown="event.stopPropagation()">
+            <div class="pill-group">
+                <button type="button" class="glass-btn" onclick="calibrate(event)" title="今の持ち方を0°（無音の中心）にします">🎯 0° 基準</button>
+                <select class="glass-btn" id="scale-select" onchange="onScaleChange(event)" aria-label="音階">
+                    <option value="major8" selected>🌸 広い8音(2層×4方向)</option>
+                    <option value="birthday8">🎂 バースデー8音(2層×4方向)</option>
+                    <option value="major16">🌌 拡張16音(4層×4方向)</option>
+                    <option value="penta8">✨ ペンタ8音(2層×4方向)</option>
+                    <option value="simple4">🥁 かんたん4音(1層)</option>
+                </select>
+            </div>
+            <div class="pill-group">
+                <div class="mode-switch" role="group" aria-label="演奏モード">
+                    <button type="button" class="mode-btn active" data-mode="free" onclick="onSelectModeBtn('free', event)">🎹 通常</button>
+                    <button type="button" class="mode-btn" data-mode="demo" onclick="onSelectModeBtn('demo', event)">🎵 デモ</button>
+                    <button type="button" class="mode-btn" data-mode="practice" onclick="onSelectModeBtn('practice', event)">🎯 練習</button>
+                </div>
+                <select class="glass-btn" id="song-select" onchange="onSongSelectChange(event)" aria-label="曲"></select>
+                <button type="button" class="glass-btn" id="settings-btn" onclick="toggleSettings(event)" aria-expanded="false" aria-controls="settings-panel">⚙︎ 設定</button>
+            </div>
+        </div>
+
+        <!-- 設定パネル（使う頻度の低い操作をまとめる） -->
+        <div id="settings-panel" onpointerdown="event.stopPropagation()" role="dialog" aria-label="設定">
+            <h3>設定</h3>
+            <div class="set-row"><div>傾きの感度<small>小さく傾けるだけで届くのは「びんかん」</small></div>
+                <div class="set-seg" id="sens-seg">
+                    <button type="button" data-sens="0.75">ゆったり</button><button type="button" data-sens="1" class="on">ふつう</button><button type="button" data-sens="1.4">びんかん</button>
+                </div></div>
+            <div class="set-row"><div>画面の向き<small>持ち方に合わせて自動。逆さのときだけ回転</small></div>
+                <button type="button" class="glass-btn" id="flip-btn" onclick="toggleFlip180(event)">⟳ 180°回転</button></div>
+            <div class="set-row"><div>動く向き<small>傾けた方向と球の動きが逆に感じるとき</small></div>
+                <button type="button" class="glass-btn" id="invert-btn" onclick="toggleInvert(event)">⇄ 反転</button></div>
+            <div class="set-row"><div>響き<small>左: 残響（ホール）・右: やまびこ</small></div></div>
+            <div id="space-slot"></div>
+            <div class="set-row"><div>テーマ色</div><button type="button" class="glass-btn" onclick="changeColors(event)">🎨 色を変える</button></div>
+            <div class="set-row"><div>AR（カメラ背景）</div><button type="button" class="glass-btn" id="cam-btn" onclick="toggleCamera(event)">📷 AR OFF</button></div>
+            <button type="button" class="glass-btn" onclick="toggleSettings(event)" style="align-self:center">閉じる</button>
+        </div>
+
+        <!-- 練習モードガイド（左上の空きスペースに控えめに表示） -->
+        <div id="practice-guide"></div>
+
+        <!-- 下部ガラスピル（5音色＋操作可能な響きスライダー） -->
+        <div id="bottom-bar" onpointerdown="event.stopPropagation()">
+            <div id="bottom-dock">
+                <button type="button" class="preset-pill active" data-preset="piano" onclick="selectPreset('piano', event)">🎹 ピアノ</button>
+                <button type="button" class="preset-pill" data-preset="ethereal" onclick="selectPreset('ethereal', event)">✨ すぃー</button>
+                <button type="button" class="preset-pill" data-preset="synth" onclick="selectPreset('synth', event)">🎛️ ススススイー</button>
+                <button type="button" class="preset-pill" data-preset="moto" onclick="selectPreset('moto', event)">🏍️ ズーズー</button>
+                <button type="button" class="preset-pill" data-preset="trumpet" onclick="selectPreset('trumpet', event)">🎺 トランペット</button>
+            </div>
+            <div id="space-control">
+                <span>響</span>
+                <input id="space-slider" type="range" min="-100" max="100" value="-25" oninput="onSpaceSliderChange(this.value)">
+                <span>残</span>
+            </div>
+        </div>
+
+        <!-- 開始画面 -->
+        <div id="start-overlay" onpointerdown="event.stopPropagation()">
+            <div class="start-card">
+                <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap;">
+                    <span style="font-size:0.72rem; letter-spacing:0.16em; color:#10b981; font-weight:800;">ORBITAL LEVEL SYNTH</span>
+                    <div style="display:flex; align-items:center; gap:6px;">
+                        <span style="font-size:0.68rem; color:rgba(255,255,255,0.65);">デモ・練習曲:</span>
+                        <select class="glass-btn" id="start-song-select" onchange="onStartSongChange(event)"></select>
+                    </div>
+                </div>
+                <h1 style="margin:0; font-size:1.28rem; font-weight:800;">軌道水準器オービタル・シンセ</h1>
+                <p class="hold-tip">📱 スマホを<strong>横向き・画面を上</strong>にして、お盆のように両手で持ちます</p>
+                <div class="steps">
+                    <div class="step"><svg viewBox="0 0 54 40" aria-hidden="true"><rect x="6" y="14" width="42" height="18" rx="4" fill="none" stroke="#fff" stroke-width="2" transform="rotate(-12 27 23)"/><circle cx="38" cy="18" r="4" fill="#10b981"/><path d="M14 8 l8 -3 M22 5 l-2 6" stroke="#10b981" stroke-width="2" fill="none" stroke-linecap="round"/></svg><b>① 傾ける</b>球が転がって<br>花びら（音）を選ぶ</div>
+                    <div class="step"><svg viewBox="0 0 54 40" aria-hidden="true"><circle cx="27" cy="20" r="9" fill="#10b981"/><circle cx="27" cy="20" r="15" fill="none" stroke="#fff" stroke-width="2" stroke-dasharray="70 30"/><path d="M44 8 q4 4 0 8 M47 5 q7 7 0 14" stroke="#fff" stroke-width="2" fill="none"/></svg><b>② 止める</b>ピタッと止めると<br>その音が鳴る</div>
+                    <div class="step"><svg viewBox="0 0 54 40" aria-hidden="true"><circle cx="27" cy="20" r="6" fill="none" stroke="#fff" stroke-width="2"/><circle cx="44" cy="20" r="4" fill="#10b981"/><path d="M38 20 H32 m3 -3 l-3 3 3 3" stroke="#10b981" stroke-width="2" fill="none" stroke-linecap="round"/><path d="M44 12 v-6 m-3 3 l3 -3 3 3" stroke="#10b981" stroke-width="2" fill="none" stroke-linecap="round"/></svg><b>③ 次の音へ</b>別の花びらへ移るか<br>中心に戻して次の音</div>
+                </div>
+                <div class="start-actions">
+                    <button type="button" class="start-mode-btn primary" onclick="startAppWithMode('free', event)">🎹 通常演奏</button>
+                    <button type="button" class="start-mode-btn demo" onclick="startAppWithMode('demo', event)">🎵 デモ演奏</button>
+                    <button type="button" class="start-mode-btn practice" onclick="startAppWithMode('practice', event)">🎯 練習モード</button>
+                </div>
+            </div>
+        </div>
+
+        <div id="toast"></div>
+    </div>
+
+    <div id="error-banner"></div>
+
+    <script>
+        window.onerror = function (msg) {
+            const b = document.getElementById('error-banner');
+            if (b) {
+                b.style.display = 'block';
+                b.textContent = 'エラー: ' + msg;
+            }
+        };
+
+        // ==========================================
+        // 1. パラメータ＆オービタル音階・楽曲ライブラリ定義
+        //    Dir: 0=上(UP), 1=右(RIGHT), 2=下(DOWN), 3=左(LEFT)
+        // ==========================================
+        const MIN_PLAY_RADIUS = 4.5;  // 中心0°基準円の半径（これ未満は無音）
+        const RESET_RADIUS    = 2.6;  // ロック後、ここまで中心に戻したらリセット
+
+        const SCALE_DEFS = {
+            simple4: {
+                layers: 1,
+                degPerLayer: 10.0,
+                notes: [60, 62, 64, 67],
+                labels: ["ド C4", "レ D4", "ミ E4", "ソ G4"],
+                hues: [0, 42, 145, 210]
+            },
+            major8: {
+                layers: 2,
+                degPerLayer: 7.5,
+                notes: [
+                    60, 62, 64, 65,
+                    67, 69, 71, 72
+                ],
+                labels: [
+                    "ド C4", "レ D4", "ミ E4", "ファ F4",
+                    "ソ G4", "ラ A4", "シ B4", "ド C5"
+                ],
+                hues: [0, 32, 56, 138, 185, 222, 268, 315]
+            },
+            birthday8: {
+                layers: 2,
+                degPerLayer: 7.5,
+                notes: [
+                    60, 62, 64, 65,
+                    67, 69, 70, 72
+                ],
+                labels: [
+                    "ド C4", "レ D4", "ミ E4", "ファ F4",
+                    "ソ G4", "ラ A4", "シ♭ Bb4", "ド C5"
+                ],
+                hues: [0, 32, 56, 138, 185, 222, 278, 322]
+            },
+            penta8: {
+                layers: 2,
+                degPerLayer: 7.5,
+                notes: [
+                    60, 62, 64, 67,
+                    69, 72, 74, 76
+                ],
+                labels: [
+                    "ド C4", "レ D4", "ミ E4", "ソ G4",
+                    "ラ A4", "ド C5", "レ D5", "ミ E5"
+                ],
+                hues: [350, 34, 64, 158, 196, 232, 275, 318]
+            },
+            major16: {
+                layers: 4,
+                degPerLayer: 5.5,
+                notes: [
+                    60, 62, 64, 65,
+                    67, 69, 71, 72,
+                    74, 76, 77, 79,
+                    81, 83, 84, 86
+                ],
+                labels: [
+                    "ド C4", "レ D4", "ミ E4", "ファ F4",
+                    "ソ G4", "ラ A4", "シ B4", "ド C5",
+                    "レ D5", "ミ E5", "ファ F5", "ソ G5",
+                    "ラ A5", "シ B5", "ド C6", "レ D6"
+                ],
+                hues: [
+                    0, 32, 56, 138,
+                    185, 222, 268, 315,
+                    14, 44, 88, 165,
+                    202, 245, 290, 338
+                ]
+            }
+        };
+
+        // デモ＆練習モード共通の楽曲ライブラリ（ここに曲を増やすだけでデモ・練習の両方に自動対応）
+        const SONG_LIBRARY = {
+            happyBirthday: {
+                id: "happyBirthday",
+                title: "ハッピーバースデー",
+                icon: "🎂",
+                scaleKey: "birthday8",
+                events: [
+                    { idx: 0, dur: 260, step: 340 }, { idx: 0, dur: 150, step: 190 }, { idx: 1, dur: 430, step: 510 },
+                    { idx: 0, dur: 430, step: 510 }, { idx: 3, dur: 430, step: 510 }, { idx: 2, dur: 820, step: 980 },
+                    { idx: 0, dur: 260, step: 340 }, { idx: 0, dur: 150, step: 190 }, { idx: 1, dur: 430, step: 510 },
+                    { idx: 0, dur: 430, step: 510 }, { idx: 4, dur: 430, step: 510 }, { idx: 3, dur: 820, step: 980 },
+                    { idx: 0, dur: 260, step: 340 }, { idx: 0, dur: 150, step: 190 }, { idx: 7, dur: 430, step: 510 },
+                    { idx: 5, dur: 430, step: 510 }, { idx: 3, dur: 430, step: 510 }, { idx: 2, dur: 430, step: 510 }, { idx: 1, dur: 820, step: 980 },
+                    { idx: 6, dur: 260, step: 340 }, { idx: 6, dur: 150, step: 190 }, { idx: 5, dur: 430, step: 510 },
+                    { idx: 3, dur: 430, step: 510 }, { idx: 4, dur: 430, step: 510 }, { idx: 3, dur: 980, step: 1300 }
+                ]
+            }
+        };
+
+        // アプリ全体モード管理: 'free' | 'demo' | 'practice'
+        let appMode = 'free';
+        let activeSongKey = Object.keys(SONG_LIBRARY)[0] || 'happyBirthday';
+
+        // 姿勢・表示ステート
+        // 改良: 画面の向きは持ち方から自動で決める（flip180 は「逆さに見えるとき」の手動補正だけに使う）
+        let flip180 = false;
+        let portraitRot = 90;          // 縦画面のまま横に持つとき、ステージを回す向き（±90°を傾きから自動判定）
+        let sensitivity = 1;           // 傾きの感度（設定パネル）
+        let activeRotationDeg = 0;
+        let stageWidth = window.innerWidth || 800;
+        let stageHeight = window.innerHeight || 400;
+
+        let curXDeg = 0, curYDeg = 0, prevSafeRoll = 0;
+        let offsetXDeg = 0, offsetYDeg = 0;
+        let isCalibratedOnce = false;
+        let invertAxes = false;
+        let orientationListenerAttached = false;
+
+        let smoothX = 0, smoothY = 0;
+        let prevX = 0, prevY = 0;
+        let velX = 0, velY = 0;
+
+        // 2D物理スプリング
+        let springVelY = 0, lastYForSpring = 0, springY = 0;
+        let panX = 0, panY = 0;
+
+        // 演奏ステート
+        let playState = 'NEUTRAL'; // 'NEUTRAL' | 'AIMING' | 'LOCKED'
+        let peakAimVel = 0;
+        let settleMs = 0;
+        let lockedIndex = -1;
+        let lockedNoteName = '';
+        let lockedFreq = 0;
+        let lockedTime = 0;
+
+        // 厳格な同音リトリガー用
+        let retriggerArmed = false;
+        let retriggerSettleMs = 0;
+        let lastPreviewIdx = -1;
+
+        // デモ演奏用ステート
+        const DEMO_LEAD_IN_MS = 240;
+        let demoTimeline = [];
+        let demoTotalLoopMs = 0;
+        let demoStartTime = 0;
+        let demoLastCycle = -1;
+        let demoLastEventIdx = -1;
+        let demoTriggeredForEvent = false;
+        let demoReleasedForEvent = false;
+
+        // 練習モード用ステート
+        let practiceStepIdx = 0;
+
+        let colorNormal = "#10b981";
+        let colorSide = "#ef4444";
+        let isZeroReached = false;
+        let isCameraOn = false;
+        let videoStream = null;
+        let isStarted = false;
+
+        // ドラッグテスト用
+        let isDragging = false, dragMoved = false;
+        let dragStartTime = 0, dragStartX = 0, dragStartY = 0;
+        let dragBaseX = 0, dragBaseY = 0;
+
+        // ==========================================
+        // 2. 花びら型 SVG オービタル盤面の生成
+        // ==========================================
+        const stage = document.getElementById('landscape-stage');
+        let centerRadiusPx = 56;
+        let layerThicknessPx = 62;
+        let pxPerDeg = 8.0;
+
+        function getScaleConfig() {
+            const sel = document.getElementById('scale-select');
+            const key = sel ? sel.value : 'major8';
+            return SCALE_DEFS[key] || SCALE_DEFS.major8;
+        }
+
+        function getActiveSong() {
+            return SONG_LIBRARY[activeSongKey] || SONG_LIBRARY.happyBirthday;
+        }
+
+        function getPracticeTargetIdx() {
+            if (appMode !== 'practice') return -1;
+            const song = getActiveSong();
+            if (!song || !song.events || !song.events.length) return -1;
+            const safeStep = practiceStepIdx % song.events.length;
+            return song.events[safeStep].idx;
+        }
+
+        function describePetalArc(rIn, rOut, startDeg, endDeg) {
+            const toRad = d => (d * Math.PI) / 180;
+            const s = toRad(startDeg);
+            const e = toRad(endDeg);
+            const x1 = rOut * Math.cos(s), y1 = rOut * Math.sin(s);
+            const x2 = rOut * Math.cos(e), y2 = rOut * Math.sin(e);
+            const x3 = rIn  * Math.cos(e), y3 = rIn  * Math.sin(e);
+            const x4 = rIn  * Math.cos(s), y4 = rIn  * Math.sin(s);
+            return `M ${x1.toFixed(2)} ${y1.toFixed(2)} ` +
+                   `A ${rOut} ${rOut} 0 0 1 ${x2.toFixed(2)} ${y2.toFixed(2)} ` +
+                   `L ${x3.toFixed(2)} ${y3.toFixed(2)} ` +
+                   `A ${rIn} ${rIn} 0 0 0 ${x4.toFixed(2)} ${y4.toFixed(2)} Z`;
+        }
+
+        function buildOrbitalBoard() {
+            const svg = document.getElementById('orbital-svg');
+            if (!svg) return;
+
+            const cfg = getScaleConfig();
+            const minDim = Math.min(stageWidth, stageHeight);
+
+            centerRadiusPx = Math.max(46, Math.min(60, Math.round(minDim * 0.14)));
+            const fitLayers = Math.min(2, cfg.layers);
+            const availR = (minDim * 0.48) - centerRadiusPx;
+            layerThicknessPx = Math.max(46, Math.min(78, Math.round(availR / Math.max(1, fitLayers))));
+            pxPerDeg = layerThicknessPx / cfg.degPerLayer;
+
+            const maxR = centerRadiusPx + cfg.layers * (layerThicknessPx + 4) + 30;
+            const svgSize = maxR * 2;
+            svg.setAttribute('width', svgSize);
+            svg.setAttribute('height', svgSize);
+            svg.setAttribute('viewBox', `${-maxR} ${-maxR} ${svgSize} ${svgSize}`);
+            svg.innerHTML = '';
+
+            const xGroup = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+            [45, 135, 225, 315].forEach(ang => {
+                const rad = (ang * Math.PI) / 180;
+                const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+                line.setAttribute('x1', (centerRadiusPx * Math.cos(rad)).toFixed(1));
+                line.setAttribute('y1', (centerRadiusPx * Math.sin(rad)).toFixed(1));
+                line.setAttribute('x2', ((maxR - 10) * Math.cos(rad)).toFixed(1));
+                line.setAttribute('y2', ((maxR - 10) * Math.sin(rad)).toFixed(1));
+                line.setAttribute('stroke', 'rgba(255, 255, 255, 0.14)');
+                line.setAttribute('stroke-width', '1');
+                line.setAttribute('stroke-dasharray', '4 6');
+                xGroup.appendChild(line);
+            });
+            svg.appendChild(xGroup);
+
+            const baseCircle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+            baseCircle.setAttribute('id', 'svg-base-circle');
+            baseCircle.setAttribute('cx', '0');
+            baseCircle.setAttribute('cy', '0');
+            baseCircle.setAttribute('r', String(centerRadiusPx - 2));
+            baseCircle.setAttribute('fill', 'rgba(16, 185, 129, 0.08)');
+            baseCircle.setAttribute('stroke', 'rgba(255, 255, 255, 0.32)');
+            baseCircle.setAttribute('stroke-width', '1.5');
+            svg.appendChild(baseCircle);
+
+            const dirCenterAngles = [-90, 0, 90, 180];
+
+            for (let L = 0; L < cfg.layers; L++) {
+                const rIn  = centerRadiusPx + 4 + L * (layerThicknessPx + 4);
+                const rOut = rIn + layerThicknessPx - 2;
+                const angleGap = Math.max(2.0, 4.2 - L * 0.7);
+
+                for (let d = 0; d < 4; d++) {
+                    const idx = L * 4 + d;
+                    const hue = cfg.hues[idx % cfg.hues.length];
+                    const centerAng = dirCenterAngles[d];
+                    const startDeg = centerAng - 45 + angleGap;
+                    const endDeg   = centerAng + 45 - angleGap;
+
+                    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+                    path.setAttribute('d', describePetalArc(rIn, rOut, startDeg, endDeg));
+                    path.setAttribute('class', 'petal-path');
+                    path.dataset.idx = String(idx);
+                    path.dataset.hue = String(hue);
+                    path.setAttribute('fill', `hsla(${hue}, 78%, 55%, 0.11)`);
+                    path.setAttribute('stroke', `hsla(${hue}, 82%, 65%, 0.34)`);
+                    path.setAttribute('stroke-width', '1.2');
+                    svg.appendChild(path);
+
+                    const rMid = (rIn + rOut) / 2;
+                    const radMid = (centerAng * Math.PI) / 180;
+                    const txt = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+                    txt.setAttribute('x', (rMid * Math.cos(radMid)).toFixed(1));
+                    txt.setAttribute('y', (rMid * Math.sin(radMid)).toFixed(1));
+                    txt.setAttribute('class', 'petal-label');
+                    txt.dataset.idx = String(idx);
+                    txt.textContent = cfg.labels[idx];
+                    svg.appendChild(txt);
+                }
+            }
+
+            const old = document.getElementById('guide-line'); if (old && old.parentNode) old.parentNode.removeChild(old);
+            const rippleGroup = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+            rippleGroup.setAttribute('id', 'ripple-layer');
+            svg.appendChild(rippleGroup);
+
+            updateOrbitalHighlight(-1, false);
+        }
+
+        function spawnPetalRipple(idx) {
+            const svg = document.getElementById('orbital-svg');
+            const rippleLayer = document.getElementById('ripple-layer');
+            if (!svg || !rippleLayer || idx < 0) return;
+
+            const targetPath = svg.querySelector(`.petal-path[data-idx="${idx}"]`);
+            if (!targetPath) return;
+
+            const hue = targetPath.dataset.hue || '160';
+            const clone = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+            clone.setAttribute('d', targetPath.getAttribute('d'));
+            clone.setAttribute('fill', 'none');
+            clone.setAttribute('stroke', `hsla(${hue}, 95%, 75%, 0.95)`);
+            clone.setAttribute('class', 'ripple-ring');
+            rippleLayer.appendChild(clone);
+
+            setTimeout(() => {
+                if (clone.parentNode) clone.parentNode.removeChild(clone);
+            }, 600);
+        }
+
+        function updateOrbitalHighlight(activeIdx, isLocked) {
+            const svg = document.getElementById('orbital-svg');
+            if (!svg) return;
+
+            const practiceTargetIdx = getPracticeTargetIdx();
+            const isPractice = (appMode === 'practice');
+
+            const paths = svg.querySelectorAll('.petal-path');
+            paths.forEach(p => {
+                const idx = parseInt(p.dataset.idx, 10);
+                const hue = p.dataset.hue;
+                const isActive = (idx === activeIdx);
+                const isTarget = (isPractice && idx === practiceTargetIdx);
+
+                p.classList.toggle('practice-target', isTarget);
+
+                if (isTarget) {
+                    const fillA = (isActive && isLocked) ? 0.50 : 0.34;
+                    p.setAttribute('fill', `hsla(${hue}, 92%, 62%, ${fillA})`);
+                    p.setAttribute('stroke', '#ffffff');
+                    p.setAttribute('stroke-width', '2.8');
+                } else if (isActive) {
+                    if (isPractice && isLocked) {
+                        // 練習モードで他の音に触れて鳴った場合は控えめに表示
+                        p.setAttribute('fill', `hsla(${hue}, 55%, 45%, 0.18)`);
+                        p.setAttribute('stroke', `hsla(${hue}, 65%, 60%, 0.45)`);
+                        p.setAttribute('stroke-width', '1.4');
+                    } else {
+                        const fillA = isLocked ? 0.42 : 0.26;
+                        const strokeA = isLocked ? 0.98 : 0.78;
+                        p.setAttribute('fill', `hsla(${hue}, 90%, 60%, ${fillA})`);
+                        p.setAttribute('stroke', `hsla(${hue}, 95%, 75%, ${strokeA})`);
+                        p.setAttribute('stroke-width', isLocked ? '2.6' : '1.8');
+                    }
+                } else {
+                    const baseFillA = isPractice ? 0.06 : 0.10;
+                    const baseStrokeA = isPractice ? 0.22 : 0.30;
+                    p.setAttribute('fill', `hsla(${hue}, 78%, 55%, ${baseFillA})`);
+                    p.setAttribute('stroke', `hsla(${hue}, 82%, 65%, ${baseStrokeA})`);
+                    p.setAttribute('stroke-width', '1.1');
+                }
+            });
+
+            const labels = svg.querySelectorAll('.petal-label');
+            labels.forEach(t => {
+                const idx = parseInt(t.dataset.idx, 10);
+                t.classList.toggle('active', idx === activeIdx || (isPractice && idx === practiceTargetIdx));
+            });
+        }
+
+        function updateLayoutOrientation() {
+            const vw = window.innerWidth || document.documentElement.clientWidth || 800;
+            const vh = window.innerHeight || document.documentElement.clientHeight || 400;
+            if (vw < 50 || vh < 50) return;
+
+            if (vw < vh) {
+                stageWidth = vh;
+                stageHeight = vw;
+                activeRotationDeg = portraitRot + (flip180 ? 180 : 0);
+            } else {
+                stageWidth = vw;
+                stageHeight = vh;
+                activeRotationDeg = flip180 ? 180 : 0;
+            }
+
+            stage.style.width = `${stageWidth}px`;
+            stage.style.height = `${stageHeight}px`;
+            stage.style.transform = `translate(-50%, -50%) rotate(${activeRotationDeg}deg)`;
+            buildOrbitalBoard();
+        }
+
+        function toggleFlip180(e) {
+            if (e) e.stopPropagation();
+            flip180 = !flip180;
+            updateLayoutOrientation();
+            isCalibratedOnce = false;   // 向きが変わったので0°を取り直す
+            showToast("画面の向きを180°回転しました");
+        }
+
+        window.addEventListener('resize', updateLayoutOrientation);
+        window.addEventListener('orientationchange', () => setTimeout(updateLayoutOrientation, 120));
+
+        // ==========================================
+        // 3. Web Audio API 音響エンジン (5音色 + 空間響き + 練習モード音量制御)
+        // ==========================================
+        let audioCtx = null;
+        let masterComp = null;
+        let voiceFilter = null;
+        let waveShaper = null;
+        let voiceGain = null;
+        let dryGain = null;
+        let reverbNode = null, reverbSend = null;
+        let delayNode = null, delayFeedback = null, delaySend = null;
+
+        let osc1 = null, osc2 = null, osc3 = null;
+        let osc1Gain = null, osc2Gain = null, osc3Gain = null;
+        let noiseSrc = null, noiseFilter = null, noiseGain = null;
+        let lfo = null, lfoFilterGain = null, lfoPitchGain = null;
+
+        let currentPreset = 'piano';
+        let spaceBalance = -0.25;
+
+        function midiToFreq(midi) {
+            return 440 * Math.pow(2, (midi - 69) / 12);
+        }
+
+        function createReverbBuffer(ctx, duration = 1.6, decay = 2.6) {
+            const len = Math.floor(ctx.sampleRate * duration);
+            const buf = ctx.createBuffer(2, len, ctx.sampleRate);
+            for (let ch = 0; ch < 2; ch++) {
+                const data = buf.getChannelData(ch);
+                for (let i = 0; i < len; i++) {
+                    data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, decay);
+                }
+            }
+            return buf;
+        }
+
+        function createDistortionCurve(amount = 0) {
+            const k = amount;
+            const n = 1024;
+            const curve = new Float32Array(n);
+            const deg = Math.PI / 180;
+            for (let i = 0; i < n; ++i) {
+                const x = (i * 2) / n - 1;
+                curve[i] = k === 0 ? x : ((3 + k) * x * 20 * deg) / (Math.PI + k * Math.abs(x));
+            }
+            return curve;
+        }
+
+        function setupAudio() {
+            if (audioCtx) return;
+            const AudioCtx = window.AudioContext || window.webkitAudioContext;
+            if (!AudioCtx) return;
+            audioCtx = new AudioCtx();
+
+            osc1 = audioCtx.createOscillator();
+            osc2 = audioCtx.createOscillator();
+            osc3 = audioCtx.createOscillator();
+            osc1Gain = audioCtx.createGain();
+            osc2Gain = audioCtx.createGain();
+            osc3Gain = audioCtx.createGain();
+
+            const noiseLen = audioCtx.sampleRate;
+            const noiseBuf = audioCtx.createBuffer(1, noiseLen, audioCtx.sampleRate);
+            const nd = noiseBuf.getChannelData(0);
+            for (let i = 0; i < noiseLen; i++) nd[i] = Math.random() * 2 - 1;
+            noiseSrc = audioCtx.createBufferSource();
+            noiseSrc.buffer = noiseBuf;
+            noiseSrc.loop = true;
+
+            noiseFilter = audioCtx.createBiquadFilter();
+            noiseFilter.type = 'bandpass';
+            noiseFilter.frequency.value = 1800;
+            noiseFilter.Q.value = 2.0;
+            noiseGain = audioCtx.createGain();
+            noiseGain.gain.value = 0;
+
+            lfo = audioCtx.createOscillator();
+            lfo.frequency.value = 5.0;
+            lfoFilterGain = audioCtx.createGain();
+            lfoFilterGain.gain.value = 0;
+            lfoPitchGain = audioCtx.createGain();
+            lfoPitchGain.gain.value = 0;
+
+            voiceFilter = audioCtx.createBiquadFilter();
+            voiceFilter.type = 'lowpass';
+            voiceFilter.frequency.value = 1800;
+            voiceFilter.Q.value = 1.5;
+
+            waveShaper = audioCtx.createWaveShaper();
+            waveShaper.curve = createDistortionCurve(0);
+
+            voiceGain = audioCtx.createGain();
+            voiceGain.gain.value = 0;
+
+            dryGain = audioCtx.createGain();
+            dryGain.gain.value = 0.9;
+
+            reverbNode = audioCtx.createConvolver();
+            reverbNode.buffer = createReverbBuffer(audioCtx, 1.6, 2.6);
+            reverbSend = audioCtx.createGain();
+            reverbSend.gain.value = 0.22;
+
+            delayNode = audioCtx.createDelay(1.0);
+            delayNode.delayTime.value = 0.24;
+            delayFeedback = audioCtx.createGain();
+            delayFeedback.gain.value = 0.3;
+            delaySend = audioCtx.createGain();
+            delaySend.gain.value = 0.0;
+
+            masterComp = audioCtx.createDynamicsCompressor();
+            masterComp.threshold.value = -14;
+            masterComp.knee.value = 18;
+            masterComp.ratio.value = 6;
+
+            osc1.connect(osc1Gain);
+            osc2.connect(osc2Gain);
+            osc3.connect(osc3Gain);
+            osc1Gain.connect(voiceFilter);
+            osc2Gain.connect(voiceFilter);
+            osc3Gain.connect(voiceFilter);
+
+            noiseSrc.connect(noiseFilter);
+            noiseFilter.connect(noiseGain);
+            noiseGain.connect(voiceFilter);
+
+            lfo.connect(lfoFilterGain);
+            lfoFilterGain.connect(voiceFilter.frequency);
+            lfo.connect(lfoPitchGain);
+            lfoPitchGain.connect(osc1.frequency);
+            lfoPitchGain.connect(osc2.frequency);
+
+            voiceFilter.connect(waveShaper);
+            waveShaper.connect(voiceGain);
+
+            voiceGain.connect(dryGain);
+            dryGain.connect(masterComp);
+
+            voiceGain.connect(reverbSend);
+            reverbSend.connect(reverbNode);
+            reverbNode.connect(masterComp);
+
+            voiceGain.connect(delaySend);
+            delaySend.connect(delayNode);
+            delayNode.connect(delayFeedback);
+            delayFeedback.connect(delayNode);
+            delayNode.connect(masterComp);
+
+            masterComp.connect(audioCtx.destination);
+
+            osc1.start();
+            osc2.start();
+            osc3.start();
+            noiseSrc.start();
+            lfo.start();
+
+            applyPresetConfig(currentPreset);
+            updateSpatialEffects();
+        }
+
+        function applyPresetConfig(preset) {
+            if (!audioCtx) return;
+            const now = audioCtx.currentTime;
+
+            if (preset === 'piano') {
+                osc1.type = 'triangle';
+                osc2.type = 'sine';
+                osc3.type = 'sine';
+                osc1.detune.setValueAtTime(0, now);
+                osc2.detune.setValueAtTime(1200, now);
+                osc3.detune.setValueAtTime(1902, now);
+                osc1Gain.gain.setTargetAtTime(0.58, now, 0.02);
+                osc2Gain.gain.setTargetAtTime(0.24, now, 0.02);
+                osc3Gain.gain.setTargetAtTime(0.08, now, 0.02);
+                noiseGain.gain.setTargetAtTime(0, now, 0.02);
+                voiceFilter.Q.setTargetAtTime(1.0, now, 0.03);
+                waveShaper.curve = createDistortionCurve(0);
+                lfoFilterGain.gain.setTargetAtTime(0, now, 0.03);
+                lfoPitchGain.gain.setTargetAtTime(0.35, now, 0.03);
+            } else if (preset === 'ethereal') {
+                osc1.type = 'sine';
+                osc2.type = 'triangle';
+                osc3.type = 'sine';
+                osc1.detune.setValueAtTime(0, now);
+                osc2.detune.setValueAtTime(5, now);
+                osc3.detune.setValueAtTime(1200, now);
+                osc1Gain.gain.setTargetAtTime(0.45, now, 0.03);
+                osc2Gain.gain.setTargetAtTime(0.28, now, 0.03);
+                osc3Gain.gain.setTargetAtTime(0.14, now, 0.03);
+                noiseFilter.frequency.setTargetAtTime(2400, now, 0.04);
+                noiseGain.gain.setTargetAtTime(0.05, now, 0.04);
+                voiceFilter.Q.setTargetAtTime(1.8, now, 0.04);
+                waveShaper.curve = createDistortionCurve(0);
+                lfo.frequency.setTargetAtTime(3.6, now, 0.05);
+                lfoFilterGain.gain.setTargetAtTime(110, now, 0.05);
+                lfoPitchGain.gain.setTargetAtTime(1.2, now, 0.05);
+            } else if (preset === 'synth') {
+                osc1.type = 'sawtooth';
+                osc2.type = 'sawtooth';
+                osc3.type = 'sawtooth';
+                osc1.detune.setValueAtTime(-11, now);
+                osc2.detune.setValueAtTime(0, now);
+                osc3.detune.setValueAtTime(11, now);
+                osc1Gain.gain.setTargetAtTime(0.26, now, 0.03);
+                osc2Gain.gain.setTargetAtTime(0.32, now, 0.03);
+                osc3Gain.gain.setTargetAtTime(0.26, now, 0.03);
+                noiseGain.gain.setTargetAtTime(0.01, now, 0.04);
+                voiceFilter.Q.setTargetAtTime(4.8, now, 0.04);
+                waveShaper.curve = createDistortionCurve(4);
+                lfo.frequency.setTargetAtTime(5.5, now, 0.05);
+                lfoFilterGain.gain.setTargetAtTime(70, now, 0.05);
+                lfoPitchGain.gain.setTargetAtTime(0.8, now, 0.05);
+            } else if (preset === 'moto') {
+                osc1.type = 'sawtooth';
+                osc2.type = 'square';
+                osc3.type = 'sawtooth';
+                osc1.detune.setValueAtTime(-1200, now);
+                osc2.detune.setValueAtTime(-2400, now);
+                osc3.detune.setValueAtTime(-1192, now);
+                osc1Gain.gain.setTargetAtTime(0.44, now, 0.03);
+                osc2Gain.gain.setTargetAtTime(0.30, now, 0.03);
+                osc3Gain.gain.setTargetAtTime(0.24, now, 0.03);
+                noiseFilter.frequency.setTargetAtTime(400, now, 0.04);
+                noiseGain.gain.setTargetAtTime(0.08, now, 0.04);
+                voiceFilter.Q.setTargetAtTime(3.0, now, 0.04);
+                waveShaper.curve = createDistortionCurve(26);
+                lfo.frequency.setTargetAtTime(18, now, 0.05);
+                lfoFilterGain.gain.setTargetAtTime(320, now, 0.05);
+                lfoPitchGain.gain.setTargetAtTime(3.2, now, 0.05);
+            } else if (preset === 'trumpet') {
+                osc1.type = 'sawtooth';
+                osc2.type = 'square';
+                osc3.type = 'sawtooth';
+                osc1.detune.setValueAtTime(0, now);
+                osc2.detune.setValueAtTime(4, now);
+                osc3.detune.setValueAtTime(-4, now);
+                osc1Gain.gain.setTargetAtTime(0.40, now, 0.03);
+                osc2Gain.gain.setTargetAtTime(0.20, now, 0.03);
+                osc3Gain.gain.setTargetAtTime(0.20, now, 0.03);
+                noiseFilter.frequency.setTargetAtTime(1600, now, 0.04);
+                noiseGain.gain.setTargetAtTime(0.02, now, 0.04);
+                voiceFilter.Q.setTargetAtTime(3.4, now, 0.04);
+                waveShaper.curve = createDistortionCurve(7);
+                lfo.frequency.setTargetAtTime(5.6, now, 0.05);
+                lfoFilterGain.gain.setTargetAtTime(50, now, 0.05);
+                lfoPitchGain.gain.setTargetAtTime(1.4, now, 0.05);
+            }
+        }
+
+        function triggerLockedNote(freq, dynNorm, isDemo = false, volumeScale = 1.0) {
+            if (!audioCtx || audioCtx.state !== 'running') return;
+            const now = audioCtx.currentTime;
+            const vs = Math.max(0.05, Math.min(1.0, volumeScale));
+            const isMutedCue = (vs < 0.5);
+
+            osc1.frequency.cancelScheduledValues(now);
+            osc2.frequency.cancelScheduledValues(now);
+            osc3.frequency.cancelScheduledValues(now);
+            voiceGain.gain.cancelScheduledValues(now);
+            voiceFilter.frequency.cancelScheduledValues(now);
+
+            if (currentPreset === 'trumpet') {
+                osc1.frequency.setValueAtTime(freq * 0.93, now);
+                osc1.frequency.exponentialRampToValueAtTime(freq, now + 0.055);
+                osc2.frequency.setValueAtTime(freq * 0.93, now);
+                osc2.frequency.exponentialRampToValueAtTime(freq, now + 0.055);
+                osc3.frequency.setValueAtTime(freq * 0.93, now);
+                osc3.frequency.exponentialRampToValueAtTime(freq, now + 0.055);
+            } else {
+                osc1.frequency.setValueAtTime(freq, now);
+                osc2.frequency.setValueAtTime(freq, now);
+                osc3.frequency.setValueAtTime(freq, now);
+            }
+
+            if (currentPreset === 'piano') {
+                voiceFilter.frequency.setValueAtTime(isMutedCue ? 1600 : 5200, now);
+                voiceFilter.frequency.exponentialRampToValueAtTime(isMutedCue ? 520 : 950, now + 0.6);
+                voiceGain.gain.setValueAtTime(0.001, now);
+                voiceGain.gain.linearRampToValueAtTime(Math.max(0.001, 0.68 * vs), now + 0.008);
+                voiceGain.gain.exponentialRampToValueAtTime(Math.max(0.0005, 0.18 * vs), now + 0.45);
+                voiceGain.gain.exponentialRampToValueAtTime(0.0001, now + (isMutedCue ? 0.65 : 1.55));
+            } else if (currentPreset === 'ethereal') {
+                voiceFilter.frequency.setValueAtTime(isMutedCue ? 900 : (1400 + dynNorm * 2200), now);
+                voiceGain.gain.setValueAtTime(0.001, now);
+                voiceGain.gain.linearRampToValueAtTime(Math.max(0.001, 0.42 * vs), now + 0.14);
+            } else if (currentPreset === 'synth') {
+                voiceFilter.frequency.setValueAtTime(isMutedCue ? 420 : 600, now);
+                voiceFilter.frequency.exponentialRampToValueAtTime(isMutedCue ? 1100 : (3600 + dynNorm * 1400), now + 0.09);
+                voiceGain.gain.setValueAtTime(0.001, now);
+                voiceGain.gain.linearRampToValueAtTime(Math.max(0.001, 0.44 * vs), now + 0.025);
+            } else if (currentPreset === 'moto') {
+                voiceFilter.frequency.setValueAtTime(isMutedCue ? 360 : (420 + dynNorm * 1600), now);
+                lfo.frequency.setValueAtTime(11 + dynNorm * 32, now);
+                voiceGain.gain.setValueAtTime(0.001, now);
+                voiceGain.gain.linearRampToValueAtTime(Math.max(0.001, 0.48 * vs), now + 0.03);
+            } else if (currentPreset === 'trumpet') {
+                voiceFilter.frequency.setValueAtTime(isMutedCue ? 450 : 700, now);
+                voiceFilter.frequency.exponentialRampToValueAtTime(isMutedCue ? 1050 : 3200, now + 0.08);
+                voiceGain.gain.setValueAtTime(0.001, now);
+                voiceGain.gain.linearRampToValueAtTime(Math.max(0.001, 0.46 * vs), now + 0.035);
+            }
+
+            if (!isDemo && !isMutedCue) {
+                try { if (navigator.vibrate) navigator.vibrate(20); } catch (_) {}
+            }
+        }
+
+        function onSpaceSliderChange(val) {
+            spaceBalance = Number(val) / 100;
+            updateSpatialEffects();
+        }
+
+        function updateSpatialEffects() {
+            if (!audioCtx || audioCtx.state !== 'running') return;
+            const now = audioCtx.currentTime;
+            if (spaceBalance < 0) {
+                const rev = -spaceBalance;
+                reverbSend.gain.setTargetAtTime(0.14 + rev * 0.72, now, 0.05);
+                delaySend.gain.setTargetAtTime(0.02, now, 0.05);
+                dryGain.gain.setTargetAtTime(0.92 - rev * 0.18, now, 0.05);
+            } else {
+                const del = spaceBalance;
+                reverbSend.gain.setTargetAtTime(0.16, now, 0.05);
+                delaySend.gain.setTargetAtTime(del * 0.45, now, 0.05);
+                delayFeedback.gain.setTargetAtTime(0.2 + del * 0.32, now, 0.05);
+                dryGain.gain.setTargetAtTime(0.92, now, 0.05);
+            }
+        }
+
+        function releaseNote(velAbs) {
+            if (!audioCtx || audioCtx.state !== 'running') return;
+            const now = audioCtx.currentTime;
+            voiceGain.gain.cancelScheduledValues(now);
+            const tau = velAbs > 45 ? 0.025 : 0.075;
+            voiceGain.gain.setTargetAtTime(0, now, tau);
+        }
+
+        // ==========================================
+        // 4. モード統合管理・曲選択・練習モードロジック
+        // ==========================================
+        function populateSongSelectors() {
+            const keys = Object.keys(SONG_LIBRARY);
+            const selects = [
+                document.getElementById('song-select'),
+                document.getElementById('start-song-select')
+            ];
+            selects.forEach(sel => {
+                if (!sel) return;
+                sel.innerHTML = '';
+                keys.forEach(k => {
+                    const song = SONG_LIBRARY[k];
+                    const opt = document.createElement('option');
+                    opt.value = k;
+                    opt.textContent = `${song.icon || '🎵'} ${song.title}`;
+                    sel.appendChild(opt);
+                });
+                sel.value = activeSongKey;
+            });
+        }
+
+        function syncSongSelectors(songKey) {
+            const s1 = document.getElementById('song-select');
+            const s2 = document.getElementById('start-song-select');
+            if (s1) s1.value = songKey;
+            if (s2) s2.value = songKey;
+        }
+
+        function updatePracticeGuideUI() {
+            const guide = document.getElementById('practice-guide');
+            if (!guide) return;
+
+            if (appMode !== 'practice' || !isStarted) {
+                guide.style.display = 'none';
+                return;
+            }
+
+            const song = getActiveSong();
+            const cfg = getScaleConfig();
+            const total = song && song.events ? song.events.length : 0;
+            const stepNum = total > 0 ? (practiceStepIdx % total) + 1 : 0;
+            const targetIdx = getPracticeTargetIdx();
+            const label = (targetIdx >= 0 && cfg.labels[targetIdx]) ? cfg.labels[targetIdx] : '';
+
+            guide.textContent = `🎯 練習 ${stepNum}/${total} ｜ 次は「${label}」→ 点線の先へ`;
+            guide.style.display = 'inline-flex';
+        }
+
+        function syncModeUI() {
+            document.querySelectorAll('.mode-btn').forEach(btn => {
+                btn.classList.toggle('active', btn.dataset.mode === appMode);
+            });
+            const songSel = document.getElementById('song-select');
+            if (songSel) {
+                songSel.classList.toggle('active', appMode === 'demo' || appMode === 'practice');
+                songSel.classList.toggle('hidden-song', appMode === 'free');   // 改良: 曲は通常演奏では使わないので隠す
+            }
+            updatePracticeGuideUI();
+        }
+
+        function resetPlaybackCoreState() {
+            releaseNote(100);
+            playState = 'NEUTRAL';
+            lockedIndex = -1;
+            lockedNoteName = '';
+            lockedFreq = 0;
+            peakAimVel = 0;
+            settleMs = 0;
+            retriggerArmed = false;
+            retriggerSettleMs = 0;
+            lastPreviewIdx = -1;
+            isDragging = false;
+
+            demoTimeline = [];
+            demoTotalLoopMs = 0;
+            demoLastCycle = -1;
+            demoLastEventIdx = -1;
+            demoTriggeredForEvent = false;
+            demoReleasedForEvent = false;
+        }
+
+        function setAppMode(mode, songKey = activeSongKey) {
+            const validMode = (mode === 'demo' || mode === 'practice') ? mode : 'free';
+            if (songKey && SONG_LIBRARY[songKey]) {
+                activeSongKey = songKey;
+            }
+            syncSongSelectors(activeSongKey);
+
+            // 必ずオーディオを有効化（ユーザー操作起因）
+            try {
+                setupAudio();
+                if (audioCtx && audioCtx.state === 'suspended') {
+                    audioCtx.resume();
+                }
+            } catch (err) {
+                console.warn('Audio init:', err);
+            }
+
+            // 既存状態を完全にクリーンリセット（各モードが干渉・破綻しないようにする）
+            resetPlaybackCoreState();
+            appMode = validMode;
+
+            const song = getActiveSong();
+            const scaleSel = document.getElementById('scale-select');
+
+            if (appMode === 'demo' || appMode === 'practice') {
+                if (scaleSel && song && song.scaleKey && SCALE_DEFS[song.scaleKey]) {
+                    scaleSel.value = song.scaleKey;
+                }
+            }
+
+            buildOrbitalBoard();
+
+            if (appMode === 'demo') {
+                let accMs = 0;
+                demoTimeline = song.events.map(ev => {
+                    const item = {
+                        idx: ev.idx,
+                        dur: ev.dur,
+                        step: ev.step,
+                        startMs: accMs,
+                        endMs: accMs + ev.step
+                    };
+                    accMs += ev.step;
+                    return item;
+                });
+                demoTotalLoopMs = accMs;
+                demoStartTime = performance.now();
+                smoothX = 0; smoothY = 0;
+                prevX = 0; prevY = 0;
+                velX = 0; velY = 0;
+
+                syncModeUI();
+                updateOrbitalHighlight(-1, false);
+                showToast(`🎵 デモ演奏: ${song.title} (ループ)`);
+            } else if (appMode === 'practice') {
+                practiceStepIdx = 0;
+                smoothX = 0; smoothY = 0;
+                prevX = 0; prevY = 0;
+                velX = 0; velY = 0;
+
+                syncModeUI();
+                updateOrbitalHighlight(-1, false);
+                showToast(`🎯 練習モード: 光る花びらを順に鳴らそう！`);
+            } else {
+                smoothX = 0; smoothY = 0;
+                prevX = 0; prevY = 0;
+                velX = 0; velY = 0;
+
+                syncModeUI();
+                updateOrbitalHighlight(-1, false);
+                showToast("🎹 通常演奏モード");
+            }
+        }
+
+        function onSelectModeBtn(mode, e) {
+            if (e) e.stopPropagation();
+            setAppMode(mode, activeSongKey);
+        }
+
+        function onSongSelectChange(e) {
+            if (e) e.stopPropagation();
+            const sel = document.getElementById('song-select');
+            const chosen = sel ? sel.value : activeSongKey;
+            if (!chosen || !SONG_LIBRARY[chosen]) return;
+            activeSongKey = chosen;
+            syncSongSelectors(chosen);
+
+            if (appMode === 'demo' || appMode === 'practice') {
+                setAppMode(appMode, chosen);
+            } else {
+                showToast(`楽曲を選択: ${SONG_LIBRARY[chosen].title}`);
+            }
+        }
+
+        function onStartSongChange(e) {
+            if (e) e.stopPropagation();
+            const sel = document.getElementById('start-song-select');
+            if (sel && sel.value && SONG_LIBRARY[sel.value]) {
+                activeSongKey = sel.value;
+                syncSongSelectors(activeSongKey);
+            }
+        }
+
+        // 練習モード時の発音＆ステップ判定（静止ロック・同音リトリガー共通）
+        function handleManualNoteTrigger(petalIdx, freq, dynNorm) {
+            if (appMode === 'practice') {
+                const song = getActiveSong();
+                const targetIdx = getPracticeTargetIdx();
+                if (petalIdx === targetIdx) {
+                    // 正解：通常音量で鳴らし、リップルを飛ばし、次の音へ進む
+                    triggerLockedNote(freq, dynNorm, false, 1.0);
+                    spawnPetalRipple(petalIdx);
+                    practiceStepIdx++;
+                    if (practiceStepIdx >= song.events.length) {
+                        practiceStepIdx = 0;
+                        showToast(`🎉 「${song.title}」クリア！ もう1周練習できます`);
+                    }
+                    updatePracticeGuideUI();
+                } else {
+                    // 間違い：音量を小さく抑えて気にならないようにし、ステップは進めない
+                    triggerLockedNote(freq, dynNorm, false, 0.14);
+                }
+            } else {
+                // 通常モード
+                triggerLockedNote(freq, dynNorm, false, 1.0);
+                spawnPetalRipple(petalIdx);
+            }
+        }
+
+        // ==========================================
+        // 5. 2軸センサー＆コントロール処理
+        // ==========================================
+        let toastTimer = null;
+        function showToast(msg) {
+            const t = document.getElementById('toast');
+            if (!t) return;
+            t.textContent = msg;
+            t.style.display = 'block';
+            clearTimeout(toastTimer);
+            toastTimer = setTimeout(() => { t.style.display = 'none'; }, 2200);
+        }
+
+        function attachOrientationListener() {
+            if (orientationListenerAttached) return;
+            window.addEventListener('deviceorientation', handleOrientation, true);
+            orientationListenerAttached = true;
+        }
+
+        function startAppWithMode(mode, e) {
+            if (e) e.stopPropagation();
+
+            // 1. ユーザー操作内で同期的にAudioContextを生成・起動
+            try {
+                setupAudio();
+                if (audioCtx && audioCtx.state === 'suspended') {
+                    audioCtx.resume();
+                }
+            } catch (err) {
+                console.warn('Audio init:', err);
+            }
+
+            // 2. 必ずどのボタンを押しても即座に画面を開いて選択モードを起動
+            const startSel = document.getElementById('start-song-select');
+            const chosenSong = (startSel && startSel.value && SONG_LIBRARY[startSel.value]) ? startSel.value : activeSongKey;
+
+            const overlay = document.getElementById('start-overlay');
+            if (overlay) overlay.style.display = 'none';
+            isStarted = true;
+            updateColors();
+            setAppMode(mode, chosenSong);
+
+            // 3. センサー許可の取得（iOSでも画面遷移をブロックしない）
+            if (!orientationListenerAttached) {
+                if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+                    try {
+                        DeviceOrientationEvent.requestPermission()
+                            .then(state => {
+                                if (state === 'granted') {
+                                    attachOrientationListener();
+                                } else if (mode !== 'demo') {
+                                    showToast("センサー未許可（画面ドラッグで全方向操作可）");
+                                }
+                            })
+                            .catch(() => {
+                                attachOrientationListener();
+                            });
+                    } catch (_) {
+                        attachOrientationListener();
+                    }
+                } else {
+                    attachOrientationListener();
+                }
+            }
+        }
+
+        function getHardwareSign() {
+            let ang = 90;
+            if (window.screen && screen.orientation && typeof screen.orientation.angle === 'number') {
+                ang = screen.orientation.angle;
+            } else if (typeof window.orientation === 'number') {
+                ang = window.orientation;
+            }
+            const osSign = (ang === -90 || ang === 270) ? -1 : 1;
+            return osSign * (flip180 ? -1 : 1);
+        }
+
+        // 改良: 傾きを「重力の向き」から直接求める。画面がどちら向きに回っていても、
+        // 低くなった側へ球が転がる（符号の場合分けが不要）。
+        let lastViewGravity = null;
+        function screenAngleDeg() {
+            if (window.screen && screen.orientation && typeof screen.orientation.angle === 'number') return screen.orientation.angle;
+            if (typeof window.orientation === 'number') return window.orientation;
+            return 0;
+        }
+        function handleOrientation(e) {
+            if (e.beta === null && e.gamma === null) return;
+            const B = (e.beta || 0) * Math.PI / 180, G = (e.gamma || 0) * Math.PI / 180;
+            // 端末座標での「下」の向き（x右・y上・z画面の手前）
+            const dx = Math.sin(G) * Math.cos(B), dy = -Math.sin(B), dz = -Math.cos(B) * Math.cos(G);
+            // 表示（ビューポート）座標へ: OSの画面回転を考慮し、y を下向きに
+            const a = screenAngleDeg() * Math.PI / 180;
+            const vx = dx * Math.cos(a) - dy * Math.sin(a);
+            const vy = -(dx * Math.sin(a) + dy * Math.cos(a));
+            lastViewGravity = { x: vx, y: vy, z: dz };
+            if (!isCalibratedOnce) autoOrient(false);
+            // ステージ座標へ（ステージは activeRotationDeg だけ回して表示している）
+            const r = -activeRotationDeg * Math.PI / 180;
+            const lx = vx * Math.cos(r) - vy * Math.sin(r);
+            const ly = vx * Math.sin(r) + vy * Math.cos(r);
+            curXDeg = Math.asin(Math.max(-1, Math.min(1, lx))) * 180 / Math.PI;
+            curYDeg = Math.asin(Math.max(-1, Math.min(1, ly))) * 180 / Math.PI;
+
+            if (!isCalibratedOnce) {
+                offsetXDeg = curXDeg;
+                offsetYDeg = curYDeg;
+                isCalibratedOnce = true;
+            }
+        }
+
+        // 縦画面のまま横に持っているとき、低い側を画面の「下」にする（OSの自動回転と同じ考え方）
+        function autoOrient(announce) {
+            const vw = window.innerWidth, vh = window.innerHeight;
+            if (!lastViewGravity || vw >= vh) return false;
+            const gx = lastViewGravity.x;
+            if (Math.abs(gx) < 0.12) return false;          // ほぼ水平で判断できない
+            const want = gx > 0 ? -90 : 90;
+            if (want === portraitRot && !flip180) return false;
+            portraitRot = want; flip180 = false;
+            updateLayoutOrientation();
+            if (announce) showToast('持ち方に合わせて画面の向きを直しました');
+            return true;
+        }
+
+        function calibrate(e) {
+            if (e) e.stopPropagation();
+            if (autoOrient(true)) { isCalibratedOnce = false; return; }   // 向きを直したら、次のセンサー値で0°を取り直す
+            offsetXDeg = curXDeg;
+            offsetYDeg = curYDeg;
+
+            if (appMode === 'demo') {
+                showToast("センサーの 0° 基準を更新しました（デモ再生中）");
+                return;
+            }
+
+            smoothX = 0; smoothY = 0;
+            prevX = 0; prevY = 0;
+            velX = 0; velY = 0;
+            playState = 'NEUTRAL';
+            lockedIndex = -1;
+            lockedNoteName = '';
+            lockedFreq = 0;
+            peakAimVel = 0;
+            settleMs = 0;
+            retriggerArmed = false;
+            retriggerSettleMs = 0;
+            releaseNote(100);
+            try { if (navigator.vibrate) navigator.vibrate(25); } catch (_) {}
+            showToast("ここを 0° 中心（無音）に設定しました");
+        }
+
+        // マウス/タッチドラッグでの全方向テスト＆タップ0°リセット
+        stage.addEventListener('pointerdown', (e) => {
+            if (!isStarted || appMode === 'demo') return;
+            if (e.target && e.target.closest && e.target.closest('#top-controls, #bottom-bar, #start-overlay, #settings-panel')) return;
+            dragStartTime = performance.now();
+            dragStartX = e.clientX;
+            dragStartY = e.clientY;
+            dragMoved = false;
+            isDragging = true;
+            dragBaseX = curXDeg;
+            dragBaseY = curYDeg;
+        });
+
+        window.addEventListener('pointermove', (e) => {
+            if (!isDragging || appMode === 'demo') return;
+            const rawDx = e.clientX - dragStartX;
+            const rawDy = e.clientY - dragStartY;
+            if (Math.hypot(rawDx, rawDy) > 10) dragMoved = true;
+
+            const rad = (-activeRotationDeg * Math.PI) / 180;
+            const localDx = rawDx * Math.cos(rad) - rawDy * Math.sin(rad);
+            const localDy = rawDx * Math.sin(rad) + rawDy * Math.cos(rad);
+
+            const invSign = invertAxes ? -1 : 1;
+            curXDeg = offsetXDeg + Math.max(-50, Math.min(50, (dragBaseX - offsetXDeg) + (localDx * 0.16) * invSign));
+            curYDeg = offsetYDeg + Math.max(-50, Math.min(50, (dragBaseY - offsetYDeg) + (localDy * 0.16) * invSign));
+            isCalibratedOnce = true;
+        });
+
+        window.addEventListener('pointerup', (e) => {
+            if (!isDragging) return;
+            isDragging = false;
+            if (appMode === 'demo') return;
+            const tapDuration = performance.now() - dragStartTime;
+            // 改良: 画面のどこを触っても0°に戻るのではなく、中央の円をタップしたときだけ
+            if (!dragMoved && tapDuration < 350 && isStarted) {
+                if (e.target && e.target.closest && e.target.closest('#center-hud')) {
+                    calibrate();
+                }
+            }
+        });
+        window.addEventListener('pointercancel', () => { isDragging = false; });
+
+        function toggleSettings(e) {
+            if (e) e.stopPropagation();
+            const p = document.getElementById('settings-panel'), b = document.getElementById('settings-btn');
+            const open = !p.classList.contains('open');
+            p.classList.toggle('open', open); b.classList.toggle('active', open); b.setAttribute('aria-expanded', String(open));
+        }
+        document.addEventListener('DOMContentLoaded', () => {
+            const slot = document.getElementById('space-slot'), sc = document.getElementById('space-control');
+            if (slot && sc) slot.appendChild(sc);
+            document.querySelectorAll('#sens-seg button').forEach(b => b.addEventListener('click', ev => {
+                ev.stopPropagation();
+                sensitivity = parseFloat(b.dataset.sens) || 1;
+                document.querySelectorAll('#sens-seg button').forEach(o => o.classList.toggle('on', o === b));
+                showToast(`感度: ${b.textContent}`);
+            }));
+        });
+
+        function toggleInvert(e) {
+            if (e) e.stopPropagation();
+            invertAxes = !invertAxes;
+            document.getElementById('invert-btn').classList.toggle('active', invertAxes);
+            showToast(invertAxes ? "移動軸：反転" : "移動軸：標準");
+        }
+
+        function onScaleChange(e) {
+            if (e) e.stopPropagation();
+            // デモ中・練習中にユーザーが手動で別の音階を選んだら、干渉を防ぐため通常演奏へ戻す
+            if (appMode !== 'free') {
+                resetPlaybackCoreState();
+                appMode = 'free';
+                syncModeUI();
+                showToast("音階を変更したため通常演奏モードに切り替えました");
+            } else {
+                releaseNote(100);
+                playState = 'NEUTRAL';
+                lockedIndex = -1;
+                lastPreviewIdx = -1;
+            }
+            buildOrbitalBoard();
+        }
+
+        function selectPreset(preset, e) {
+            if (e) e.stopPropagation();
+            currentPreset = preset;
+            document.querySelectorAll('.preset-pill').forEach(btn => {
+                btn.classList.toggle('active', btn.dataset.preset === preset);
+            });
+            applyPresetConfig(preset);
+        }
+
+        function getRandomBrightColor() {
+            const r = Math.floor(Math.random() * 140 + 105).toString(16).padStart(2, '0');
+            const g = Math.floor(Math.random() * 140 + 105).toString(16).padStart(2, '0');
+            const b = Math.floor(Math.random() * 140 + 105).toString(16).padStart(2, '0');
+            return `#${r}${g}${b}`;
+        }
+
+        function hexToRgba(hex, alpha) {
+            const r = parseInt(hex.slice(1, 3), 16);
+            const g = parseInt(hex.slice(3, 5), 16);
+            const b = parseInt(hex.slice(5, 7), 16);
+            return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+        }
+
+        function changeColors(e) {
+            if (e) e.stopPropagation();
+            colorNormal = getRandomBrightColor();
+            colorSide = getRandomBrightColor();
+            updateColors();
+            showToast("テーマカラーを変更しました");
+        }
+
+        function updateColors() {
+            document.documentElement.style.setProperty('--color-normal', colorNormal);
+            document.documentElement.style.setProperty('--color-side', colorSide);
+            if (isCameraOn) {
+                document.documentElement.style.setProperty('--bg-black', 'rgba(0,0,0,0)');
+                document.documentElement.style.setProperty('--overlay-color', hexToRgba(colorNormal, 0.16));
+            } else {
+                document.documentElement.style.setProperty('--bg-black', '#000000');
+                document.documentElement.style.setProperty('--overlay-color', 'rgba(0,0,0,0)');
+            }
+        }
+
+        async function toggleCamera(e) {
+            if (e) e.stopPropagation();
+            const videoObj = document.getElementById('camera-bg');
+            const btn = document.getElementById('cam-btn');
+
+            if (isCameraOn) {
+                if (videoStream) videoStream.getTracks().forEach(t => t.stop());
+                videoObj.srcObject = null;
+                videoObj.style.display = 'none';
+                isCameraOn = false;
+                btn.textContent = "📷 AR OFF";
+                btn.classList.remove('active');
+                updateColors();
+            } else {
+                try {
+                    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                        throw new Error('no camera api');
+                    }
+                    videoStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+                    videoObj.srcObject = videoStream;
+                    videoObj.style.display = 'block';
+                    isCameraOn = true;
+                    btn.textContent = "📷 AR ON";
+                    btn.classList.add('active');
+                    updateColors();
+                    showToast("ARモードを起動しました");
+                } catch (err) {
+                    showToast("カメラを利用できません");
+                }
+            }
+        }
+
+        // ==========================================
+        // 6. 自動デモ演奏モーション計算（楽器の仕組み通りに自動操作＆ループ）
+        // ==========================================
+        function getPetalTargetDeg(idx, cfg) {
+            const layer = Math.floor(idx / 4);
+            const dir = idx % 4;
+            const dirAnglesRad = [-Math.PI / 2, 0, Math.PI / 2, Math.PI];
+            const ang = dirAnglesRad[dir];
+            const rDeg = MIN_PLAY_RADIUS + (layer + 0.5) * cfg.degPerLayer;
+            return {
+                x: rDeg * Math.cos(ang),
+                y: rDeg * Math.sin(ang),
+                r: rDeg
+            };
+        }
+
+        function stepDemoLoop(now, dt) {
+            if (!demoTimeline.length || demoTotalLoopMs <= 0) return;
+
+            const cfg = getScaleConfig();
+            const elapsed = now - demoStartTime;
+
+            let demoX = 0;
+            let demoY = 0;
+            let previewIdx = -1;
+            let readoutText = '0° BASE';
+            let chargeRatio = 0;
+
+            if (elapsed < DEMO_LEAD_IN_MS) {
+                const p = Math.max(0, Math.min(1, elapsed / DEMO_LEAD_IN_MS));
+                const ease = 1 - Math.pow(1 - p, 3);
+                const firstEv = demoTimeline[0];
+                const firstPos = getPetalTargetDeg(firstEv.idx, cfg);
+                demoX = firstPos.x * ease;
+                demoY = firstPos.y * ease;
+                const rTmp = Math.hypot(demoX, demoY);
+
+                if (rTmp < MIN_PLAY_RADIUS) {
+                    playState = 'NEUTRAL';
+                    previewIdx = -1;
+                    readoutText = Math.round(rTmp) === 0 ? '0° BASE' : 'READY';
+                    chargeRatio = 0;
+                } else {
+                    playState = 'AIMING';
+                    previewIdx = firstEv.idx;
+                    readoutText = cfg.labels[firstEv.idx];
+                    chargeRatio = Math.max(0, Math.min(1, (p - 0.35) / 0.65));
+                }
+            } else {
+                const loopTime = elapsed - DEMO_LEAD_IN_MS;
+                const cycle = Math.floor(loopTime / demoTotalLoopMs);
+                const tInLoop = loopTime % demoTotalLoopMs;
+
+                let curEvIdx = 0;
+                for (let i = 0; i < demoTimeline.length; i++) {
+                    if (tInLoop >= demoTimeline[i].startMs && tInLoop < demoTimeline[i].endMs) {
+                        curEvIdx = i;
+                        break;
+                    }
+                }
+
+                if (demoLastCycle !== cycle || demoLastEventIdx !== curEvIdx) {
+                    demoLastCycle = cycle;
+                    demoLastEventIdx = curEvIdx;
+                    demoTriggeredForEvent = false;
+                    demoReleasedForEvent = false;
+                }
+
+                const ev = demoTimeline[curEvIdx];
+                const localT = tInLoop - ev.startMs;
+
+                if (localT < ev.dur) {
+                    const pos = getPetalTargetDeg(ev.idx, cfg);
+                    demoX = pos.x;
+                    demoY = pos.y;
+
+                    if (!demoTriggeredForEvent) {
+                        demoTriggeredForEvent = true;
+                        playState = 'LOCKED';
+                        lockedIndex = ev.idx;
+                        lockedNoteName = cfg.labels[ev.idx];
+                        lockedFreq = midiToFreq(cfg.notes[ev.idx]);
+                        lockedTime = now;
+                        const dynNorm = Math.max(0, Math.min(1, pos.r / 30));
+                        triggerLockedNote(lockedFreq, dynNorm, true, 1.0);
+                        spawnPetalRipple(lockedIndex);
+                    }
+
+                    previewIdx = ev.idx;
+                    readoutText = cfg.labels[ev.idx];
+                    chargeRatio = 0;
+                } else {
+                    if (!demoTriggeredForEvent) {
+                        demoTriggeredForEvent = true;
+                    }
+                    if (!demoReleasedForEvent) {
+                        demoReleasedForEvent = true;
+                        playState = 'NEUTRAL';
+                        lockedIndex = -1;
+                        lockedNoteName = '';
+                        lockedFreq = 0;
+                        releaseNote(60);
+                    }
+
+                    const gap = Math.max(1, ev.step - ev.dur);
+                    const u = Math.max(0, Math.min(1, (localT - ev.dur) / gap));
+                    const prevPos = getPetalTargetDeg(ev.idx, cfg);
+                    const nextEv = demoTimeline[(curEvIdx + 1) % demoTimeline.length];
+                    const nextPos = getPetalTargetDeg(nextEv.idx, cfg);
+
+                    if (u < 0.36) {
+                        const p = u / 0.36;
+                        const ease = 1 - Math.pow(1 - p, 2);
+                        demoX = prevPos.x * (1 - ease);
+                        demoY = prevPos.y * (1 - ease);
+                    } else if (u < 0.50) {
+                        demoX = 0;
+                        demoY = 0;
+                    } else {
+                        const p = (u - 0.50) / 0.50;
+                        const ease = 1 - Math.pow(1 - p, 3);
+                        demoX = nextPos.x * ease;
+                        demoY = nextPos.y * ease;
+                    }
+
+                    const rTmp = Math.hypot(demoX, demoY);
+                    if (u < 0.50 || rTmp < MIN_PLAY_RADIUS) {
+                        playState = 'NEUTRAL';
+                        previewIdx = -1;
+                        readoutText = Math.round(rTmp) === 0 ? '0° BASE' : 'READY';
+                        chargeRatio = 0;
+                    } else {
+                        playState = 'AIMING';
+                        previewIdx = nextEv.idx;
+                        readoutText = cfg.labels[nextEv.idx];
+                        chargeRatio = Math.max(0, Math.min(1, (u - 0.68) / 0.32));
+                    }
+                }
+            }
+
+            smoothX = demoX;
+            smoothY = demoY;
+            const instVx = (smoothX - prevX) / dt;
+            const instVy = (smoothY - prevY) / dt;
+            velX += (instVx - velX) * 0.6;
+            velY += (instVy - velY) * 0.6;
+            prevX = smoothX;
+            prevY = smoothY;
+
+            const velAbs = Math.hypot(velX, velY);
+            const rDeg = Math.hypot(smoothX, smoothY);
+
+            updateVisuals(smoothX, smoothY, rDeg, previewIdx, readoutText, velAbs, chargeRatio);
+        }
+
+        document.addEventListener('visibilitychange', () => {
+            if (document.hidden && appMode === 'demo') {
+                releaseNote(100);
+            }
+        });
+
+        // ==========================================
+        // 7. メインループ（通常演奏 & 練習モード共通の2D極座標判定）
+        // ==========================================
+        function getPetalForCoords(xDeg, yDeg) {
+            const cfg = getScaleConfig();
+            const rDeg = Math.hypot(xDeg, yDeg);
+
+            const angleDeg = (Math.atan2(yDeg, xDeg) * 180) / Math.PI;
+
+            let dir = 0;
+            if (angleDeg >= -135 && angleDeg < -45) dir = 0;      // 上 (UP)
+            else if (angleDeg >= -45 && angleDeg < 45) dir = 1;   // 右 (RIGHT)
+            else if (angleDeg >= 45 && angleDeg < 135) dir = 2;   // 下 (DOWN)
+            else dir = 3;                                         // 左 (LEFT)
+
+            let layer = Math.floor((rDeg - MIN_PLAY_RADIUS) / cfg.degPerLayer);
+            layer = Math.max(0, Math.min(cfg.layers - 1, layer));
+
+            if (lastPreviewIdx >= 0 && lastPreviewIdx < cfg.notes.length) {
+                const prevLayer = Math.floor(lastPreviewIdx / 4);
+                const prevDir = lastPreviewIdx % 4;
+                const dirCenters = [-90, 0, 90, 180];
+                let dAng = Math.abs(angleDeg - dirCenters[prevDir]);
+                if (dAng > 180) dAng = 360 - dAng;
+                const prevRStart = MIN_PLAY_RADIUS + prevLayer * cfg.degPerLayer;
+                const prevREnd   = prevRStart + cfg.degPerLayer;
+                if (dAng < 49 && rDeg >= prevRStart - 0.8 && (prevLayer === cfg.layers - 1 || rDeg <= prevREnd + 0.8)) {
+                    dir = prevDir;
+                    layer = prevLayer;
+                }
+            }
+
+            const idx = layer * 4 + dir;
+            const midi = cfg.notes[idx];
+            return {
+                idx,
+                dir,
+                layer,
+                rDeg,
+                freq: midiToFreq(midi),
+                label: cfg.labels[idx]
+            };
+        }
+
+        let lastTime = performance.now();
+
+        function loop(now) {
+            const dt = Math.min(0.08, Math.max(0.004, (now - lastTime) / 1000));
+            lastTime = now;
+
+            if (isStarted) {
+                if (appMode === 'demo') {
+                    stepDemoLoop(now, dt);
+                    requestAnimationFrame(loop);
+                    return;
+                }
+
+                let rawX = curXDeg - offsetXDeg;
+                let rawY = curYDeg - offsetYDeg;
+                if (invertAxes) { rawX = -rawX; rawY = -rawY; }
+                rawX *= sensitivity; rawY *= sensitivity;
+
+                smoothX += (rawX - smoothX) * 0.44;
+                smoothY += (rawY - smoothY) * 0.44;
+
+                const instVx = (smoothX - prevX) / dt;
+                const instVy = (smoothY - prevY) / dt;
+                velX += (instVx - velX) * 0.48;
+                velY += (instVy - velY) * 0.48;
+                prevX = smoothX;
+                prevY = smoothY;
+
+                const velAbs = Math.hypot(velX, velY);
+                const rDeg = Math.hypot(smoothX, smoothY);
+                const dynNorm = Math.max(0, Math.min(1, rDeg / 30));
+
+                let previewIdx = -1;
+                let readoutText = '0° 中心';
+                let chargeRatio = 0;
+
+                if (playState === 'LOCKED') {
+                    if (rDeg <= RESET_RADIUS) {
+                        playState = 'NEUTRAL';
+                        lockedIndex = -1;
+                        lockedNoteName = '';
+                        lockedFreq = 0;
+                        peakAimVel = 0;
+                        settleMs = 0;
+                        retriggerArmed = false;
+                        retriggerSettleMs = 0;
+                        releaseNote(velAbs);
+                    } else {
+                        previewIdx = lockedIndex;
+                        readoutText = lockedNoteName;
+
+                        const curPetal = getPetalForCoords(smoothX, smoothY);
+                        if (curPetal.idx !== lockedIndex && rDeg >= MIN_PLAY_RADIUS) {
+                            // 改良: 別の花びらへ移ったら、中心に戻さなくてもそこで止めれば鳴る
+                            playState = 'AIMING';
+                            peakAimVel = velAbs;
+                            settleMs = 0;
+                            lastPreviewIdx = curPetal.idx;
+                            previewIdx = curPetal.idx;
+                            readoutText = curPetal.label;
+                        } else if (curPetal.idx === lockedIndex && (now - lockedTime) > 260) {
+                            if (velAbs > 42) {
+                                retriggerArmed = true;
+                                retriggerSettleMs = 0;
+                            } else if (retriggerArmed && velAbs < 9) {
+                                retriggerSettleMs += dt * 1000;
+                                chargeRatio = Math.min(1, retriggerSettleMs / 65);
+                                if (retriggerSettleMs >= 65) {
+                                    retriggerArmed = false;
+                                    retriggerSettleMs = 0;
+                                    lockedTime = now;
+                                    handleManualNoteTrigger(lockedIndex, lockedFreq, dynNorm);
+                                }
+                            } else {
+                                retriggerSettleMs = 0;
+                            }
+                        } else {
+                            retriggerArmed = false;
+                            retriggerSettleMs = 0;
+                        }
+                    }
+                } else {
+                    if (rDeg < MIN_PLAY_RADIUS) {
+                        playState = 'NEUTRAL';
+                        peakAimVel = 0;
+                        settleMs = 0;
+                        previewIdx = -1;
+                        lastPreviewIdx = -1;
+                        readoutText = Math.round(rDeg) === 0 ? '0° 中心' : '…';
+                    } else {
+                        playState = 'AIMING';
+                        const target = getPetalForCoords(smoothX, smoothY);
+                        previewIdx = target.idx;
+                        lastPreviewIdx = target.idx;
+                        readoutText = target.label;
+
+                        if (velAbs > peakAimVel) peakAimVel = velAbs;
+
+                        const isSlowed = peakAimVel >= 24 ? (velAbs < 14) : (velAbs < 8.5);
+                        if (isSlowed) {
+                            settleMs += dt * 1000;
+                            const waitMs = peakAimVel >= 24 ? 32 : 95;
+                            chargeRatio = Math.min(1, settleMs / waitMs);
+                            if (settleMs >= waitMs) {
+                                playState = 'LOCKED';
+                                lockedIndex = target.idx;
+                                lockedNoteName = target.label;
+                                lockedFreq = target.freq;
+                                lockedTime = now;
+                                retriggerArmed = false;
+                                retriggerSettleMs = 0;
+                                handleManualNoteTrigger(lockedIndex, lockedFreq, dynNorm);
+                            }
+                        } else {
+                            settleMs = 0;
+                        }
+                    }
+                }
+
+                updateVisuals(smoothX, smoothY, rDeg, previewIdx, readoutText, velAbs, chargeRatio);
+            }
+
+            requestAnimationFrame(loop);
+        }
+
+        // 改良: 練習モードでは、球から次の花びらへ点線の矢印を出す
+        function updateGuideLine(ox, oy) {
+            const svg = document.getElementById('orbital-svg');
+            if (!svg) return;
+            let line = document.getElementById('guide-line');
+            const target = getPracticeTargetIdx();
+            if (target < 0 || playState === 'LOCKED' && lockedIndex === target) { if (line) line.style.display = 'none'; return; }
+            if (!line) {
+                line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+                line.setAttribute('id', 'guide-line'); line.setAttribute('stroke', '#ffffff'); line.setAttribute('stroke-width', '2.5');
+                line.setAttribute('stroke-linecap', 'round'); line.setAttribute('opacity', '0.75');
+                svg.appendChild(line);
+            }
+            const cfg = getScaleConfig(), L = Math.floor(target / 4), d = target % 4;
+            const r = centerRadiusPx + 4 + L * (layerThicknessPx + 4) + layerThicknessPx / 2;
+            const ang = [-90, 0, 90, 180][d] * Math.PI / 180;
+            line.style.display = '';
+            line.setAttribute('x1', ox.toFixed(1)); line.setAttribute('y1', oy.toFixed(1));
+            line.setAttribute('x2', (r * Math.cos(ang)).toFixed(1)); line.setAttribute('y2', (r * Math.sin(ang)).toFixed(1));
+        }
+
+        function updateVisuals(xDeg, yDeg, rDeg, activeIdx, readoutText, velAbs, chargeRatio) {
+            const angleText = document.getElementById('angle-text');
+            const noteReadout = document.getElementById('note-readout');
+            const statePill = document.getElementById('state-pill');
+            const centerHud = document.getElementById('center-hud');
+
+            const bTop = document.getElementById('bubble-top');
+            const bBottom = document.getElementById('bubble-bottom');
+            const liquidOrb = document.getElementById('liquid-orb');
+            const chargeArc = document.getElementById('charge-arc');
+            const seaLevel = document.getElementById('sea-level');
+            const boardWrap = document.getElementById('orbital-board-wrap');
+            const edgeCompass = document.getElementById('edge-compass');
+            const baseCircle = document.getElementById('svg-base-circle');
+
+            const dispDeg = Math.round(rDeg);
+
+            angleText.textContent = `${(Math.round(rDeg * 10) / 10).toFixed(1)}°`;
+            noteReadout.textContent = readoutText;
+
+            const accelY = (yDeg - lastYForSpring);
+            springVelY += accelY * 1.4;
+            springVelY += -0.1 * springY;
+            springVelY *= 0.84;
+            springY += springVelY;
+            lastYForSpring = yDeg;
+
+            seaLevel.style.transform = `translateY(${yDeg * 3.8 + springY}px) rotate(${-xDeg}deg)`;
+            document.getElementById('grid').style.transform = `translate(${-xDeg * 2.2}px, ${-yDeg * 2.2}px)`;
+
+            const rPx = rDeg < MIN_PLAY_RADIUS
+                ? (rDeg / MIN_PLAY_RADIUS) * (centerRadiusPx * 0.5)
+                : centerRadiusPx + 4 + (rDeg - MIN_PLAY_RADIUS) * pxPerDeg;
+
+            const theta = Math.atan2(yDeg, xDeg);
+            const rawTargetX = rDeg > 0.05 ? rPx * Math.cos(theta) : 0;
+            const rawTargetY = rDeg > 0.05 ? rPx * Math.sin(theta) : 0;
+
+            const maxVisibleX = stageWidth * 0.42;
+            const maxVisibleY = stageHeight * 0.40;
+            const overflowX = Math.max(0, Math.abs(rawTargetX) - maxVisibleX * 0.72) * Math.sign(rawTargetX);
+            const overflowY = Math.max(0, Math.abs(rawTargetY) - maxVisibleY * 0.72) * Math.sign(rawTargetY);
+            const desiredPanX = -overflowX * 0.65;
+            const desiredPanY = -overflowY * 0.65;
+
+            panX += (desiredPanX - panX) * 0.2;
+            panY += (desiredPanY - panY) * 0.2;
+            boardWrap.style.transform = `translate(${panX}px, ${panY}px)`;
+
+            const orbX = rawTargetX + panX;
+            const orbY = rawTargetY + panY;
+            const clampX = Math.max(-maxVisibleX, Math.min(maxVisibleX, orbX));
+            const clampY = Math.max(-maxVisibleY, Math.min(maxVisibleY, orbY));
+            const isClamped = (Math.abs(orbX - clampX) > 4 || Math.abs(orbY - clampY) > 4);
+
+            const moveAngDeg = (Math.atan2(velY, velX) * 180) / Math.PI;
+            const stretch = Math.min(0.18, velAbs / 320);
+            const sx = 1 + stretch;
+            const sy = 1 - stretch * 0.5;
+            const pulse = playState === 'LOCKED' ? Math.sin(performance.now() * 0.022) * 0.035 : 0;
+
+            liquidOrb.style.transform = `translate(${clampX}px, ${clampY}px) rotate(${moveAngDeg}deg) scale(${sx + pulse}, ${sy + pulse})`;
+
+            const gap = dispDeg * 0.9 + Math.pow(dispDeg / 13, 2);
+            const ux = rDeg > 0.1 ? Math.cos(theta) : 0;
+            const uy = rDeg > 0.1 ? Math.sin(theta) : -1;
+            bTop.style.transform    = `translate(${clampX + ux * gap}px, ${clampY + uy * gap}px) scale(${1 - stretch * 0.3})`;
+            bBottom.style.transform = `translate(${clampX - ux * gap}px, ${clampY - uy * gap}px) scale(${1 - stretch * 0.3})`;
+
+            const circumference = 276.46;
+            chargeArc.style.strokeDashoffset = String(circumference * (1 - chargeRatio));
+            chargeArc.style.opacity = chargeRatio > 0.04 ? '0.9' : '0';
+
+            if (isClamped) {
+                edgeCompass.style.opacity = '1';
+                edgeCompass.style.transform = `translate(${clampX + Math.cos(theta) * 32}px, ${clampY + Math.sin(theta) * 32}px)`;
+            } else {
+                edgeCompass.style.opacity = '0';
+            }
+
+            updateOrbitalHighlight(activeIdx, playState === 'LOCKED');
+            updateGuideLine(rawTargetX, rawTargetY);
+
+            const isZero = (dispDeg === 0);
+            const isDemo = (appMode === 'demo');
+
+            if (playState === 'NEUTRAL') {
+                statePill.textContent = isZero ? '傾けて音を選ぶ' : '花びらまで傾けて';
+                statePill.style.background = hexToRgba(colorNormal, 0.25);
+                statePill.style.borderColor = colorNormal;
+                centerHud.style.borderColor = isZero ? colorNormal : 'rgba(255,255,255,0.3)';
+                document.documentElement.style.setProperty('--active-band-color', colorNormal);
+                seaLevel.style.borderTopColor = isZero ? colorNormal : 'rgba(255,255,255,0.45)';
+                if (baseCircle) baseCircle.setAttribute('fill', hexToRgba(colorNormal, isZero ? 0.28 : 0.10));
+
+                if (isZero) {
+                    document.body.style.backgroundColor = isCameraOn ? hexToRgba(colorNormal, 0.42) : hexToRgba(colorNormal, 0.22);
+                    document.documentElement.style.setProperty('--overlay-color', 'rgba(0,0,0,0)');
+                    bTop.style.backgroundColor = 'rgba(255,255,255,0.36)';
+                    bBottom.style.backgroundColor = 'rgba(255,255,255,0.36)';
+                    if (!isZeroReached && !isDemo) {
+                        try { if (navigator.vibrate) navigator.vibrate(20); } catch (_) {}
+                    }
+                    isZeroReached = true;
+                } else {
+                    document.body.style.backgroundColor = isCameraOn ? 'rgba(0,0,0,0)' : '#000000';
+                    if (isCameraOn) document.documentElement.style.setProperty('--overlay-color', hexToRgba(colorNormal, 0.16));
+                    bTop.style.backgroundColor = 'rgba(255,255,255,0.18)';
+                    bBottom.style.backgroundColor = 'rgba(255,255,255,0.18)';
+                    isZeroReached = false;
+                }
+            } else if (playState === 'AIMING') {
+                isZeroReached = false;
+                statePill.textContent = 'ピタッと止めると鳴る';
+                statePill.style.background = hexToRgba(colorSide, 0.36);
+                statePill.style.borderColor = colorSide;
+                centerHud.style.borderColor = colorSide;
+                document.documentElement.style.setProperty('--active-band-color', colorSide);
+                seaLevel.style.borderTopColor = colorSide;
+                if (baseCircle) baseCircle.setAttribute('fill', 'rgba(255,255,255,0.04)');
+                document.body.style.backgroundColor = isCameraOn ? 'rgba(0,0,0,0)' : '#000000';
+                if (isCameraOn) document.documentElement.style.setProperty('--overlay-color', hexToRgba(colorSide, 0.16));
+                bTop.style.backgroundColor = 'rgba(255,255,255,0.12)';
+                bBottom.style.backgroundColor = 'rgba(255,255,255,0.12)';
+            } else {
+                isZeroReached = false;
+                statePill.textContent = '♪ 次の花びら or 中心へ';
+                statePill.style.background = hexToRgba(colorNormal, 0.48);
+                statePill.style.borderColor = colorNormal;
+                centerHud.style.borderColor = colorNormal;
+                document.documentElement.style.setProperty('--active-band-color', colorNormal);
+                seaLevel.style.borderTopColor = colorNormal;
+                if (baseCircle) baseCircle.setAttribute('fill', hexToRgba(colorNormal, 0.14));
+                document.body.style.backgroundColor = isCameraOn ? 'rgba(0,0,0,0)' : '#02120c';
+                if (isCameraOn) document.documentElement.style.setProperty('--overlay-color', hexToRgba(colorNormal, 0.22));
+                bTop.style.backgroundColor = hexToRgba(colorNormal, 0.28);
+                bBottom.style.backgroundColor = hexToRgba(colorNormal, 0.28);
+            }
+        }
+
+        function initAppShell() {
+            populateSongSelectors();
+            syncModeUI();
+            updateLayoutOrientation();
+            requestAnimationFrame(loop);
+        }
+
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', initAppShell);
+        } else {
+            initAppShell();
+        }
+    </script>
+</body>
+</html>
