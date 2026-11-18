@@ -679,11 +679,20 @@
             <div class="pill-group">
                 <button type="button" class="glass-btn" onclick="calibrate(event)" title="今の持ち方を0°（無音の中心）にします">🎯 0° 基準</button>
                 <select class="glass-btn" id="scale-select" onchange="onScaleChange(event)" aria-label="音階">
-                    <option value="major8" selected>🌸 広い8音(2層×4方向)</option>
+                    <optgroup label="3オクターブ">
+                        <option value="chroma36" selected>🎹 半音すべて 36音(12×3周)</option>
+                        <option value="major21">🌸 長音階 21音(7×3周)</option>
+                        <option value="minor21">🌙 短音階 21音(7×3周)</option>
+                        <option value="penta15">✨ ペンタ 15音(5×3周)</option>
+                        <option value="blues18">🎷 ブルース 18音(6×3周)</option>
+                    </optgroup>
+                    <optgroup label="かんたん">
+                    <option value="major8">🌸 広い8音(2層×4方向)</option>
                     <option value="birthday8">🎂 バースデー8音(2層×4方向)</option>
                     <option value="major16">🌌 拡張16音(4層×4方向)</option>
                     <option value="penta8">✨ ペンタ8音(2層×4方向)</option>
                     <option value="simple4">🥁 かんたん4音(1層)</option>
+                    </optgroup>
                 </select>
             </div>
             <div class="pill-group">
@@ -851,6 +860,35 @@
             }
         };
 
+        // 3オクターブの音階: 内側から外側へ1周ごとに1オクターブ上がり、各周は上(12時)から時計回りに並ぶ
+        const PC_NAMES = ['ド', 'ド#', 'レ', 'レ#', 'ミ', 'ファ', 'ファ#', 'ソ', 'ソ#', 'ラ', 'ラ#', 'シ'];
+        const PC_EN    = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+        const PC_HUES  = [0, 16, 32, 46, 58, 118, 150, 182, 202, 222, 252, 290];
+        const BLACK_PC = [1, 3, 6, 8, 10];
+        function octaveScale(steps, rootMidi, octaves, degPerLayer) {
+            const notes = [], labels = [], full = [], hues = [], black = [];
+            for (let o = 0; o < octaves; o++) {
+                steps.forEach(st => {
+                    const m = rootMidi + o * 12 + st, pc = m % 12, oct = Math.floor(m / 12) - 1;
+                    notes.push(m);
+                    labels.push(PC_NAMES[pc] + (pc === rootMidi % 12 ? oct : ''));   // 各周の最初の音にだけオクターブ番号
+                    full.push(`${PC_NAMES[pc]} ${PC_EN[pc]}${oct}`);
+                    hues.push(PC_HUES[pc]);
+                    black.push(BLACK_PC.includes(pc));
+                });
+            }
+            return { layers: octaves, dirs: steps.length, fit: octaves, degPerLayer, notes, labels, full, hues, black };
+        }
+        Object.assign(SCALE_DEFS, {
+            chroma36: octaveScale([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11], 48, 3, 6.5),
+            major21:  octaveScale([0, 2, 4, 5, 7, 9, 11], 48, 3, 6.5),
+            minor21:  octaveScale([0, 2, 3, 5, 7, 8, 10], 57, 3, 6.5),
+            penta15:  octaveScale([0, 2, 4, 7, 9], 48, 3, 6.5),
+            blues18:  octaveScale([0, 3, 5, 6, 7, 10], 48, 3, 6.5),
+        });
+        const dirsOf = cfg => cfg.dirs || 4;
+        const labelOf = (cfg, i) => (cfg.full ? cfg.full[i] : cfg.labels[i]) || '';
+
         // デモ＆練習モード共通の楽曲ライブラリ（ここに曲を増やすだけでデモ・練習の両方に自動対応）
         const SONG_LIBRARY = {
             happyBirthday: {
@@ -947,8 +985,8 @@
 
         function getScaleConfig() {
             const sel = document.getElementById('scale-select');
-            const key = sel ? sel.value : 'major8';
-            return SCALE_DEFS[key] || SCALE_DEFS.major8;
+            const key = sel ? sel.value : 'chroma36';
+            return SCALE_DEFS[key] || SCALE_DEFS.chroma36;
         }
 
         function getActiveSong() {
@@ -985,9 +1023,9 @@
             const minDim = Math.min(stageWidth, stageHeight);
 
             centerRadiusPx = Math.max(46, Math.min(60, Math.round(minDim * 0.14)));
-            const fitLayers = Math.min(2, cfg.layers);
-            const availR = (minDim * 0.48) - centerRadiusPx;
-            layerThicknessPx = Math.max(46, Math.min(78, Math.round(availR / Math.max(1, fitLayers))));
+            const fitLayers = Math.min(cfg.fit || 2, cfg.layers);
+            const availR = (minDim * (fitLayers > 2 ? 0.43 : 0.48)) - centerRadiusPx;   // 3周のときは上下のボタンと重ならないよう少し小さく
+            layerThicknessPx = Math.max(fitLayers > 2 ? 28 : 46, Math.min(78, Math.round(availR / Math.max(1, fitLayers))));
             pxPerDeg = layerThicknessPx / cfg.degPerLayer;
 
             const maxR = centerRadiusPx + cfg.layers * (layerThicknessPx + 4) + 30;
@@ -1022,25 +1060,26 @@
             baseCircle.setAttribute('stroke-width', '1.5');
             svg.appendChild(baseCircle);
 
-            const dirCenterAngles = [-90, 0, 90, 180];
+            const D = dirsOf(cfg), span = 360 / D;
 
             for (let L = 0; L < cfg.layers; L++) {
                 const rIn  = centerRadiusPx + 4 + L * (layerThicknessPx + 4);
                 const rOut = rIn + layerThicknessPx - 2;
-                const angleGap = Math.max(2.0, 4.2 - L * 0.7);
+                const angleGap = D > 4 ? Math.max(0.8, 2.2 - L * 0.5) : Math.max(2.0, 4.2 - L * 0.7);
 
-                for (let d = 0; d < 4; d++) {
-                    const idx = L * 4 + d;
+                for (let d = 0; d < D; d++) {
+                    const idx = L * D + d;
                     const hue = cfg.hues[idx % cfg.hues.length];
-                    const centerAng = dirCenterAngles[d];
-                    const startDeg = centerAng - 45 + angleGap;
-                    const endDeg   = centerAng + 45 - angleGap;
+                    const centerAng = -90 + d * span;
+                    const startDeg = centerAng - span / 2 + angleGap;
+                    const endDeg   = centerAng + span / 2 - angleGap;
 
                     const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
                     path.setAttribute('d', describePetalArc(rIn, rOut, startDeg, endDeg));
                     path.setAttribute('class', 'petal-path');
                     path.dataset.idx = String(idx);
                     path.dataset.hue = String(hue);
+                    path.dataset.black = cfg.black && cfg.black[idx] ? '1' : '0';   // 半音(黒鍵)は暗めに
                     path.setAttribute('fill', `hsla(${hue}, 78%, 55%, 0.11)`);
                     path.setAttribute('stroke', `hsla(${hue}, 82%, 65%, 0.34)`);
                     path.setAttribute('stroke-width', '1.2');
@@ -1054,6 +1093,7 @@
                     txt.setAttribute('class', 'petal-label');
                     txt.dataset.idx = String(idx);
                     txt.textContent = cfg.labels[idx];
+                    if (D > 4) txt.style.fontSize = `${Math.max(8, Math.min(11, rMid * 2 * Math.PI / D * 0.24)).toFixed(1)}px`;
                     svg.appendChild(txt);
                 }
             }
@@ -1098,6 +1138,7 @@
             paths.forEach(p => {
                 const idx = parseInt(p.dataset.idx, 10);
                 const hue = p.dataset.hue;
+                const blk = p.dataset.black === '1';
                 const isActive = (idx === activeIdx);
                 const isTarget = (isPractice && idx === practiceTargetIdx);
 
@@ -1124,8 +1165,8 @@
                 } else {
                     const baseFillA = isPractice ? 0.06 : 0.10;
                     const baseStrokeA = isPractice ? 0.22 : 0.30;
-                    p.setAttribute('fill', `hsla(${hue}, 78%, 55%, ${baseFillA})`);
-                    p.setAttribute('stroke', `hsla(${hue}, 82%, 65%, ${baseStrokeA})`);
+                    p.setAttribute('fill', blk ? `hsla(${hue}, 20%, 8%, 0.55)` : `hsla(${hue}, 78%, 55%, ${baseFillA})`);
+                    p.setAttribute('stroke', `hsla(${hue}, ${blk ? 40 : 82}%, ${blk ? 45 : 65}%, ${baseStrokeA})`);
                     p.setAttribute('stroke-width', '1.1');
                 }
             });
@@ -1549,7 +1590,7 @@
             const total = song && song.events ? song.events.length : 0;
             const stepNum = total > 0 ? (practiceStepIdx % total) + 1 : 0;
             const targetIdx = getPracticeTargetIdx();
-            const label = (targetIdx >= 0 && cfg.labels[targetIdx]) ? cfg.labels[targetIdx] : '';
+            const label = targetIdx >= 0 ? labelOf(cfg, targetIdx) : '';
 
             guide.textContent = `🎯 練習 ${stepNum}/${total} ｜ 次は「${label}」→ 点線の先へ`;
             guide.style.display = 'inline-flex';
@@ -2031,10 +2072,10 @@
         // 6. 自動デモ演奏モーション計算（楽器の仕組み通りに自動操作＆ループ）
         // ==========================================
         function getPetalTargetDeg(idx, cfg) {
-            const layer = Math.floor(idx / 4);
-            const dir = idx % 4;
-            const dirAnglesRad = [-Math.PI / 2, 0, Math.PI / 2, Math.PI];
-            const ang = dirAnglesRad[dir];
+            const D = dirsOf(cfg);
+            const layer = Math.floor(idx / D);
+            const dir = idx % D;
+            const ang = (-90 + dir * 360 / D) * Math.PI / 180;
             const rDeg = MIN_PLAY_RADIUS + (layer + 0.5) * cfg.degPerLayer;
             return {
                 x: rDeg * Math.cos(ang),
@@ -2072,7 +2113,7 @@
                 } else {
                     playState = 'AIMING';
                     previewIdx = firstEv.idx;
-                    readoutText = cfg.labels[firstEv.idx];
+                    readoutText = labelOf(cfg, firstEv.idx);
                     chargeRatio = Math.max(0, Math.min(1, (p - 0.35) / 0.65));
                 }
             } else {
@@ -2107,7 +2148,7 @@
                         demoTriggeredForEvent = true;
                         playState = 'LOCKED';
                         lockedIndex = ev.idx;
-                        lockedNoteName = cfg.labels[ev.idx];
+                        lockedNoteName = labelOf(cfg, ev.idx);
                         lockedFreq = midiToFreq(cfg.notes[ev.idx]);
                         lockedTime = now;
                         const dynNorm = Math.max(0, Math.min(1, pos.r / 30));
@@ -2116,7 +2157,7 @@
                     }
 
                     previewIdx = ev.idx;
-                    readoutText = cfg.labels[ev.idx];
+                    readoutText = labelOf(cfg, ev.idx);
                     chargeRatio = 0;
                 } else {
                     if (!demoTriggeredForEvent) {
@@ -2161,7 +2202,7 @@
                     } else {
                         playState = 'AIMING';
                         previewIdx = nextEv.idx;
-                        readoutText = cfg.labels[nextEv.idx];
+                        readoutText = labelOf(cfg, nextEv.idx);
                         chargeRatio = Math.max(0, Math.min(1, (u - 0.68) / 0.32));
                     }
                 }
@@ -2197,30 +2238,28 @@
 
             const angleDeg = (Math.atan2(yDeg, xDeg) * 180) / Math.PI;
 
-            let dir = 0;
-            if (angleDeg >= -135 && angleDeg < -45) dir = 0;      // 上 (UP)
-            else if (angleDeg >= -45 && angleDeg < 45) dir = 1;   // 右 (RIGHT)
-            else if (angleDeg >= 45 && angleDeg < 135) dir = 2;   // 下 (DOWN)
-            else dir = 3;                                         // 左 (LEFT)
+            // 上(12時)から時計回りに D 等分した、どの方向の花びらか
+            const D = dirsOf(cfg), span = 360 / D;
+            const fromTop = ((angleDeg + 90) % 360 + 360) % 360;
+            let dir = Math.floor((fromTop + span / 2) / span) % D;
 
             let layer = Math.floor((rDeg - MIN_PLAY_RADIUS) / cfg.degPerLayer);
             layer = Math.max(0, Math.min(cfg.layers - 1, layer));
 
             if (lastPreviewIdx >= 0 && lastPreviewIdx < cfg.notes.length) {
-                const prevLayer = Math.floor(lastPreviewIdx / 4);
-                const prevDir = lastPreviewIdx % 4;
-                const dirCenters = [-90, 0, 90, 180];
-                let dAng = Math.abs(angleDeg - dirCenters[prevDir]);
-                if (dAng > 180) dAng = 360 - dAng;
+                const prevLayer = Math.floor(lastPreviewIdx / D);
+                const prevDir = lastPreviewIdx % D;
+                let dAng = Math.abs(angleDeg - (-90 + prevDir * span));
+                dAng = dAng % 360; if (dAng > 180) dAng = 360 - dAng;
                 const prevRStart = MIN_PLAY_RADIUS + prevLayer * cfg.degPerLayer;
                 const prevREnd   = prevRStart + cfg.degPerLayer;
-                if (dAng < 49 && rDeg >= prevRStart - 0.8 && (prevLayer === cfg.layers - 1 || rDeg <= prevREnd + 0.8)) {
+                if (dAng < span / 2 + Math.max(1.5, span * 0.05) && rDeg >= prevRStart - 0.8 && (prevLayer === cfg.layers - 1 || rDeg <= prevREnd + 0.8)) {
                     dir = prevDir;
                     layer = prevLayer;
                 }
             }
 
-            const idx = layer * 4 + dir;
+            const idx = layer * D + dir;
             const midi = cfg.notes[idx];
             return {
                 idx,
@@ -2228,7 +2267,7 @@
                 layer,
                 rDeg,
                 freq: midiToFreq(midi),
-                label: cfg.labels[idx]
+                label: labelOf(cfg, idx)
             };
         }
 
@@ -2370,9 +2409,9 @@
                 line.setAttribute('stroke-linecap', 'round'); line.setAttribute('opacity', '0.75');
                 svg.appendChild(line);
             }
-            const cfg = getScaleConfig(), L = Math.floor(target / 4), d = target % 4;
+            const cfg = getScaleConfig(), D = dirsOf(cfg), L = Math.floor(target / D), d = target % D;
             const r = centerRadiusPx + 4 + L * (layerThicknessPx + 4) + layerThicknessPx / 2;
-            const ang = [-90, 0, 90, 180][d] * Math.PI / 180;
+            const ang = (-90 + d * 360 / D) * Math.PI / 180;
             line.style.display = '';
             line.setAttribute('x1', ox.toFixed(1)); line.setAttribute('y1', oy.toFixed(1));
             line.setAttribute('x2', (r * Math.cos(ang)).toFixed(1)); line.setAttribute('y2', (r * Math.sin(ang)).toFixed(1));
