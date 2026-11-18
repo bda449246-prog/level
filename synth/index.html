@@ -630,6 +630,16 @@
         #guide-line { stroke-dasharray: 6 7; animation: guideflow 0.8s linear infinite; }
         @keyframes guideflow { to { stroke-dashoffset: -26; } }
         #song-select.hidden-song { display: none; }
+        /* 曲えらび: デモ・練習を押すと、曲が大きなボタンで並ぶ */
+        #song-picker { position: absolute; inset: 0; z-index: 150; display: none; align-items: center; justify-content: center; background: rgba(0,0,0,0.6); padding: 12px; }
+        #song-picker.open { display: flex; }
+        #song-picker .card { width: min(420px, 100%); max-height: 100%; overflow-y: auto; background: rgba(18,20,26,0.97); border: 1px solid rgba(255,255,255,0.18); border-radius: 20px; padding: 14px; display: flex; flex-direction: column; gap: 8px; }
+        #song-picker h3 { margin: 0 0 2px; font-size: 0.95rem; }
+        .song-item { appearance: none; border: 1px solid rgba(255,255,255,0.18); background: rgba(255,255,255,0.07); color: #fff; border-radius: 14px; padding: 11px 14px; text-align: left; font: inherit; font-size: 0.9rem; font-weight: 700; cursor: pointer; display: flex; align-items: center; gap: 10px; }
+        .song-item small { display: block; font-size: 0.66rem; font-weight: 500; color: rgba(255,255,255,0.6); margin-top: 2px; }
+        .song-item .ic { font-size: 1.4rem; }
+        .song-item:active { transform: scale(0.98); }
+        #app-version { font-size: 0.6rem; color: rgba(255,255,255,0.4); margin: 0; }
         @media (prefers-reduced-motion: reduce) { #guide-line { animation: none; } }
     </style>
 </head>
@@ -707,6 +717,10 @@
         </div>
 
         <!-- 設定パネル（使う頻度の低い操作をまとめる） -->
+        <div id="song-picker" onpointerdown="event.stopPropagation()" role="dialog" aria-label="曲をえらぶ">
+            <div class="card"><h3 id="song-picker-title">曲をえらぶ</h3><div id="song-list" style="display:flex;flex-direction:column;gap:8px"></div>
+                <button type="button" class="glass-btn" style="align-self:center" onclick="closeSongPicker()">やめる</button></div>
+        </div>
         <div id="settings-panel" onpointerdown="event.stopPropagation()" role="dialog" aria-label="設定">
             <h3>設定</h3>
             <div class="set-row"><div>傾きの感度<small>小さく傾けるだけで届くのは「びんかん」</small></div>
@@ -722,6 +736,7 @@
             <div class="set-row"><div>テーマ色</div><button type="button" class="glass-btn" onclick="changeColors(event)">🎨 色を変える</button></div>
             <div class="set-row"><div>AR（カメラ背景）</div><button type="button" class="glass-btn" id="cam-btn" onclick="toggleCamera(event)">📷 AR OFF</button></div>
             <p style="margin:0;font-size:0.62rem;line-height:1.5;color:rgba(255,255,255,0.5)">トルコ行進曲の楽譜データ: Craig Stuart Sapp, <a href="https://github.com/craigsapp/mozart-piano-sonatas" style="color:inherit">mozart-piano-sonatas</a>（CC BY-NC-SA 4.0）。旋律だけを抜き出し、1オクターブ下げて使っています。</p>
+            <p id="app-version">版: 2026-11-18（3オクターブ・トルコ行進曲 対応）</p>
             <button type="button" class="glass-btn" onclick="toggleSettings(event)" style="align-self:center">閉じる</button>
         </div>
 
@@ -1817,10 +1832,27 @@
             }
         }
 
+        // 改良: デモ・練習を押したら、まず曲を大きなボタンで選べるようにする
         function onSelectModeBtn(mode, e) {
             if (e) e.stopPropagation();
+            if (mode === 'demo' || mode === 'practice') { openSongPicker(mode); return; }
             setAppMode(mode, activeSongKey);
         }
+        function openSongPicker(mode) {
+            const list = document.getElementById('song-list');
+            document.getElementById('song-picker-title').textContent = mode === 'demo' ? '🎵 デモで聴く曲をえらぶ' : '🎯 練習する曲をえらぶ';
+            list.innerHTML = '';
+            Object.keys(SONG_LIBRARY).forEach(k => {
+                const song = SONG_LIBRARY[k];
+                const sec = Math.round(song.events.reduce((a, e) => a + e.step, 0) / 1000);
+                const b = document.createElement('button'); b.type = 'button'; b.className = 'song-item';
+                b.innerHTML = `<span class="ic">${song.icon || '🎵'}</span><span>${song.title}<small>${song.events.length}音・約${Math.floor(sec / 60)}分${String(sec % 60).padStart(2, '0')}秒</small></span>`;
+                b.addEventListener('click', ev => { ev.stopPropagation(); closeSongPicker(); setAppMode(mode, k); });
+                list.appendChild(b);
+            });
+            document.getElementById('song-picker').classList.add('open');
+        }
+        function closeSongPicker() { document.getElementById('song-picker').classList.remove('open'); }
 
         function onSongSelectChange(e) {
             if (e) e.stopPropagation();
