@@ -1,0 +1,429 @@
+<!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-status-bar-style" content="black"><meta name="theme-color" content="#000000"><style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);box-sizing:border-box;height:100%}[hidden]{display:none!important}</style></head><body>
+<title>4次元水準器</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<style>
+/* Layout: as the 立体水準器 — the reading on top (left in landscape), the glass in the middle, controls at the bottom —
+   plus a small cross-section diagram in the corner that shows where the 3D slice sits in 4D. Same palette: black, white,
+   green when level; violet marks the fourth direction (w). */
+:root{
+  --bg:#000; --fg:#fff; --level:#34c759; --w:#bf5af2; --muted:#8e8e93; --pill:rgba(44,44,46,.92);
+  --font:-apple-system,BlinkMacSystemFont,"SF Pro Display","Hiragino Sans","Hiragino Kaku Gothic ProN","Helvetica Neue",Arial,sans-serif;
+  color-scheme:dark;
+}
+html,body{height:100%}
+[hidden]{display:none!important}
+body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--font);overflow:hidden;
+  -webkit-user-select:none;user-select:none;-webkit-tap-highlight-color:transparent;-webkit-touch-callout:none}
+#app{position:fixed;inset:0;display:flex;flex-direction:column;background:var(--bg);transition:background-color .25s}
+#app.level{background:var(--level)}
+#read{flex:none;text-align:center;padding:calc(14px + env(safe-area-inset-top,0px)) 16px 2px;pointer-events:none}
+#num{display:inline-block;font-weight:200;font-size:clamp(50px,15vmin,110px);line-height:1;font-variant-numeric:tabular-nums;letter-spacing:-1px;will-change:transform}
+#num .unit{display:inline-block;width:0;overflow:visible}
+#axes{margin-top:6px;display:flex;justify-content:center;gap:14px;font-size:12.5px;color:rgba(255,255,255,.72);font-variant-numeric:tabular-nums;flex-wrap:wrap}
+#axes b{font-weight:600;color:#fff;margin-left:4px}
+#axes .w b{color:#e0b3ff}
+#app.level #axes .w b{color:#fff}
+#mode{margin-top:4px;font-size:12px;color:rgba(255,255,255,.6)}
+#stage{position:relative;flex:1;min-height:0;touch-action:none;cursor:pointer}
+#cv{position:absolute;inset:0;width:100%;height:100%;display:block}
+#side{position:absolute;left:10px;bottom:10px;width:min(34%,150px);aspect-ratio:1;pointer-events:none}
+#sideCap{position:absolute;left:10px;bottom:calc(10px + min(34%,150px) + 2px);font-size:10.5px;color:rgba(255,255,255,.6);pointer-events:none}
+#gyro{position:absolute;top:8px;right:12px;font-size:11px;color:rgba(255,255,255,.55);pointer-events:none}
+#hint{position:absolute;top:8px;left:12px;font-size:11.5px;line-height:1.5;opacity:.75;transition:opacity .6s;pointer-events:none;max-width:52%}
+#hint.gone{opacity:0}
+#demoNote{position:absolute;top:58px;right:12px;max-width:44%;background:var(--pill);font-size:11.5px;line-height:1.4;padding:6px 10px;border-radius:12px;pointer-events:none}
+#toast{position:absolute;left:50%;transform:translateX(-50%);bottom:12px;padding:7px 12px;border-radius:12px;background:var(--pill);font-size:12.5px;pointer-events:none;transition:opacity .4s;max-width:60%;text-align:center}
+#bar{flex:none;display:flex;flex-direction:column;gap:8px;padding:6px 14px calc(10px + env(safe-area-inset-bottom,0px))}
+.row{display:flex;justify-content:center;align-items:center;gap:8px;flex-wrap:wrap}
+.seg{display:inline-flex;background:var(--pill);border-radius:9px;padding:2px}
+.seg button{appearance:none;border:0;background:transparent;color:var(--fg);font:500 13px var(--font);padding:6px 11px;border-radius:7px;cursor:pointer}
+.seg button[aria-pressed="true"]{background:#636366}
+.btn{appearance:none;border:0;background:var(--pill);color:#fff;font:600 13px var(--font);padding:8px 12px;border-radius:10px;cursor:pointer}
+.btn[aria-pressed="true"]{background:var(--w);color:#fff}
+.sl{display:flex;align-items:center;gap:8px;flex:1;min-width:0;max-width:460px;font-size:12px;color:rgba(255,255,255,.8);font-variant-numeric:tabular-nums}
+.sl label{flex:none}
+.sl output{flex:none;min-width:3.6em;text-align:right}
+.sl input{flex:1;min-width:0;accent-color:var(--w)}
+.seg button:focus-visible,.btn:focus-visible,.sl input:focus-visible,#start:focus-visible{outline:2px solid var(--level);outline-offset:2px}
+#gate{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;
+  background:rgba(0,0,0,.85);cursor:pointer;padding:0 22px;text-align:center}
+#gate h1{margin:0;font-size:24px;font-weight:600}
+#gate p{margin:0;font-size:14px;line-height:1.7;color:#d1d1d6;max-width:25em}
+#start{display:inline-block;background:var(--fg);color:#000;font:600 17px var(--font);padding:13px 34px;border-radius:999px}
+@media (orientation:landscape) and (max-height:560px){
+  #app{flex-direction:row}
+  #read{width:24%;align-self:center;padding:0 0 0 calc(10px + env(safe-area-inset-left,0px))}
+  #num{font-size:clamp(38px,11vmin,70px)}
+  #stage{flex:1;height:100%}
+  #bar{width:34%;height:100%;box-sizing:border-box;justify-content:center;overflow-y:auto;padding:calc(8px + env(safe-area-inset-top,0px)) calc(12px + env(safe-area-inset-right,0px)) calc(8px + env(safe-area-inset-bottom,0px)) 4px}
+  #side{width:min(30%,120px)} #sideCap{bottom:calc(10px + min(30%,120px) + 2px)}
+}
+@media (prefers-reduced-motion:reduce){#app,#hint,#toast{transition:none}}
+</style>
+
+<div id="app">
+  <div id="read" aria-live="off">
+    <div id="num"><span id="numV">0.0</span><span class="unit">°</span></div>
+    <div id="axes"><span>左右<b id="ax">0.0°</b></span><span>前後<b id="ay">0.0°</b></span><span class="w">w方向<b id="aw">0.0°</b></span></div>
+    <div id="mode">4次元の傾き</div>
+  </div>
+  <div id="stage" aria-label="4次元水準器の3次元の断面。ドラッグで視点を回転、タップでw方向の0°合わせ">
+    <canvas id="cv"></canvas>
+    <div id="sideCap">4次元の断面図</div>
+    <canvas id="side" aria-label="w軸と重力の向きの断面図"></canvas>
+    <div id="hint">スマホを平らに回すと、水が<b style="color:#e0b3ff">4つ目の方向 w</b> に傾きます<br>ドラッグで視点 ・ タップでwを0°に</div>
+    <div id="gyro" hidden></div>
+    <div id="demoNote" hidden>モーションセンサーを使えない環境です。ドラッグで傾き、下のスライダーでw方向の傾きを再現できます。</div>
+    <div id="toast" hidden></div>
+  </div>
+  <div id="bar">
+    <div class="row">
+      <div class="sl"><label for="slice">断面の位置 w</label><input id="slice" type="range" min="-0.95" max="0.95" step="0.01" value="0"><output id="sliceV">0.00</output></div>
+      <button class="btn" id="scan" type="button" aria-pressed="false">スキャン</button>
+    </div>
+    <div class="row" id="wDemoRow" hidden>
+      <div class="sl"><label for="wtilt">w方向の傾き</label><input id="wtilt" type="range" min="-90" max="90" step="0.5" value="0"><output id="wtiltV">0.0°</output></div>
+    </div>
+    <div class="row">
+      <div class="seg" role="group" aria-label="視点">
+        <button type="button" data-v="front" aria-pressed="false">正面</button>
+        <button type="button" data-v="tilt" aria-pressed="true">斜め</button>
+        <button type="button" data-v="side" aria-pressed="false">横</button>
+      </div>
+      <div class="seg" role="group" aria-label="デモの向き" id="demoSeg" hidden>
+        <button type="button" data-d="flat" aria-pressed="true">平置き</button>
+        <button type="button" data-d="up" aria-pressed="false">立てる</button>
+      </div>
+    </div>
+  </div>
+</div>
+<div id="gate" role="button" tabindex="0" aria-label="タップして開始">
+  <h1>4次元水準器</h1>
+  <p>4次元のガラス球に水が半分入っていて、その水面（3次元の「面」）がいつも4次元の重力に垂直に保たれます。<br>
+  私たちに見えるのは、4次元の球を w の位置で切った<b>3次元の断面</b>です。<br>
+  スマホを傾けると水面がふつうに傾き、<b>平らに回す</b>と重力が4つ目の方向 w に傾いて、断面の中の水かさが増えたり減ったりします。</p>
+  <span id="start">タップして開始</span>
+</div>
+
+<script src="../3d/three.min.js"></script>
+<script>
+(() => {
+  const D2R = Math.PI / 180, R2D = 180 / Math.PI;
+  const $ = id => document.getElementById(id);
+  const app = $('app'), stage = $('stage'), cv = $('cv'), gate = $('gate'), hint = $('hint');
+  const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const norm = v => { const n = Math.hypot(v[0], v[1], v[2]) || 1; return [v[0] / n, v[1] / n, v[2] / n]; };
+  const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+
+  // ---------- sensors (same as the classic level) ----------
+  let raw = null, g = [0.06, -0.02, -1], source = 'demo', lastOrient = null, vote = -4, alive = false;
+  const orientDown = (b, gm) => { const B = b * D2R, G = gm * D2R; return [Math.sin(G) * Math.cos(B), -Math.sin(B), -Math.cos(B) * Math.cos(G)]; };
+  function onOrient(e) { if (e.beta == null || e.gamma == null) return; lastOrient = orientDown(e.beta, e.gamma); alive = true;
+    if (source !== 'motion') { raw = lastOrient; source = 'orient'; } }
+  function onMotion(e) {
+    const a = e.accelerationIncludingGravity; if (!a || a.x == null || a.y == null || a.z == null) return;
+    const n = Math.hypot(a.x, a.y, a.z); if (n < 2) return;
+    const v = [a.x / n, a.y / n, a.z / n];
+    if (lastOrient) { const d = v[1] * lastOrient[1] + v[2] * lastOrient[2]; if (Math.abs(d) > 0.3) vote = Math.max(-40, Math.min(40, vote + (d > 0 ? 1 : -1))); }
+    const s = vote >= 0 ? 1 : -1; raw = [v[0] * s, v[1] * s, v[2] * s]; source = 'motion'; alive = true;
+    fuse(raw, n / 9.81, e.rotationRate);
+  }
+
+  // ---------- gyro fusion ----------
+  // The attitude q (device → world, world z up) is integrated from the gyroscope, and gravity from the accelerometer
+  // slowly pulls it back (a complementary / Mahony filter). The gyro gives a fast, steady surface while the phone moves;
+  // the accelerometer keeps it true over time. The gyro's sign is checked against the accelerometer before it is trusted.
+  let q = null, gyroVote = 0, gyroOK = false, prevA = null, lastFuse = 0, gyroSeen = false;
+  const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+  const qMul = (a, b) => [a[0] * b[0] - a[1] * b[1] - a[2] * b[2] - a[3] * b[3], a[0] * b[1] + a[1] * b[0] + a[2] * b[3] - a[3] * b[2],
+    a[0] * b[2] - a[1] * b[3] + a[2] * b[0] + a[3] * b[1], a[0] * b[3] + a[1] * b[2] - a[2] * b[1] + a[3] * b[0]];
+  const qN = a => { const n = Math.hypot(...a) || 1; return a.map(v => v / n); };
+  const qInvRot = (q, v) => { const c = [q[0], -q[1], -q[2], -q[3]], r = qMul(qMul(c, [0, ...v]), q); return [r[1], r[2], r[3]]; };   // world → device
+  function qFromTo(u, v) { const d = dot(u, v); if (d < -0.9999) return [0, 1, 0, 0]; const c = cross(u, v); return qN([1 + d, ...c]); }
+  function fuse(a, gN, rr) {
+    const now = performance.now(), dt = lastFuse ? Math.min(0.1, (now - lastFuse) / 1000) : 0; lastFuse = now;
+    if (!q) { q = qFromTo(a, [0, 0, -1]); prevA = a; return; }
+    let w = [0, 0, 0];
+    if (rr && rr.alpha != null && rr.beta != null && rr.gamma != null) {
+      gyroSeen = true;
+      const raw = [rr.beta * D2R, rr.gamma * D2R, rr.alpha * D2R];
+      // sign check: the change gravity should show for this rotation vs. the change the accelerometer saw
+      const da = [a[0] - prevA[0], a[1] - prevA[1], a[2] - prevA[2]], pred = cross(a, raw);
+      if (Math.hypot(...raw) > 0.6 && Math.hypot(...da) > 0.004 && Math.abs(gN - 1) < 0.15) {
+        const d = dot(pred, da); if (Math.abs(d) > 1e-6) gyroVote = Math.max(-30, Math.min(30, gyroVote + (d > 0 ? 1 : -1)));
+      }
+      if (!gyroOK && Math.abs(gyroVote) >= 6) gyroOK = true;
+      if (gyroOK) { const sg = gyroVote >= 0 ? 1 : -1; w = raw.map(v => v * sg); }
+    }
+    prevA = a;
+    const dPred = qInvRot(q, [0, 0, -1]), err = cross(a, dPred);
+    const trust = Math.exp(-Math.pow((gN - 1) / 0.08, 2));                  // ignore the accelerometer while it is being shaken
+    const kp = gyroOK ? 1.4 * trust : 6;                                     // without a gyro, follow gravity like the classic level
+    const wt = [w[0] + kp * err[0], w[1] + kp * err[1], w[2] + kp * err[2]];
+    q = qN(qMul(q, [1, wt[0] * dt / 2, wt[1] * dt / 2, wt[2] * dt / 2]));
+  }
+  function screenAngle() { const a = (screen.orientation && typeof screen.orientation.angle === 'number') ? screen.orientation.angle
+    : (typeof window.orientation === 'number' ? window.orientation : 0); return a * D2R; }
+  function toScreen(v) { const a = screenAngle(), c = Math.cos(a), s = Math.sin(a); return [v[0] * c - v[1] * s, v[0] * s + v[1] * c, v[2]]; }
+
+  // demo: drag turns a virtual phone in 3D
+  let demoBase = 'flat', simX = 3.4, simY = -1.2;
+  function simVector() {
+    const ax = simY * D2R, ay = simX * D2R;
+    let v = demoBase === 'flat' ? [0, 0, -1] : [0, -1, 0];
+    if (demoBase === 'flat') v = [v[0] * Math.cos(ay) + v[2] * Math.sin(ay), v[1], -v[0] * Math.sin(ay) + v[2] * Math.cos(ay)];  // about y (left/right)
+    else v = [v[0] * Math.cos(ay) - v[1] * Math.sin(ay), v[0] * Math.sin(ay) + v[1] * Math.cos(ay), v[2]];                           // upright: roll about z
+    v = [v[0], v[1] * Math.cos(ax) - v[2] * Math.sin(ax), v[1] * Math.sin(ax) + v[2] * Math.cos(ax)];            // about x (front/back)
+    return norm(v);
+  }
+  function enterDemo(msg) { if (msg) $('demoNote').textContent = msg; source = 'demo'; $('demoNote').hidden = false; $('demoSeg').hidden = false;
+    hint.innerHTML = 'ドラッグで傾き ・ スライダーで<b style="color:#e0b3ff">w方向</b>の傾き<br>タップでwを0°に ・ 視点は下のボタン'; hint.classList.remove('gone'); }
+  document.querySelectorAll('#demoSeg button').forEach(b => b.addEventListener('click', () => {
+    demoBase = b.dataset.d; simX = demoBase === 'flat' ? 3.4 : -7.3; simY = demoBase === 'flat' ? -1.2 : 4; ref = null;
+    document.querySelectorAll('#demoSeg button').forEach(o => o.setAttribute('aria-pressed', o === b)); }));
+
+  async function start() {
+    if (start.busy) return; start.busy = true; gate.hidden = true;
+    const asks = [];
+    if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function')
+      asks.push(DeviceMotionEvent.requestPermission().catch(() => 'denied'));
+    if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function')
+      asks.push(DeviceOrientationEvent.requestPermission().catch(() => 'denied'));
+    window.addEventListener('deviceorientation', onOrient);
+    window.addEventListener('devicemotion', onMotion);
+    try { if (navigator.wakeLock) navigator.wakeLock.request('screen').catch(() => {}); } catch (_) {}
+    const res = await Promise.all(asks);
+    const ok = res.some(r => r === 'granted') || asks.length === 0;
+    setTimeout(() => { if (!alive) enterDemo(ok ? 'センサーの値が届きませんでした。ドラッグすると傾きを再現できます。'
+      : 'モーションセンサーの利用が許可されませんでした。ドラッグすると傾きを再現できます。'); }, ok ? 1500 : 0);
+    setTimeout(() => { if (source !== 'demo') hint.classList.add('gone'); }, 5000);
+  }
+  gate.addEventListener('click', start);
+  gate.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); start(); } });
+
+  // ---------- 3D scene ----------
+  // Scene axes = the screen: x right, y up, z out of the glass toward you; w, the fourth axis, is not drawn — we see the
+  // 3D slice of the 4D glass ball at w = (slice). The ball is fixed to the phone; the water's 3D surface stays
+  // perpendicular to 4D gravity, which tilts in x/y/z with the phone and into w when the phone turns flat.
+  if (!window.THREE) { $('mode').textContent = '3D表示を読み込めませんでした'; return; }
+  const renderer = new THREE.WebGLRenderer({ canvas: cv, antialias: true, alpha: true });
+  renderer.localClippingEnabled = true;
+  const scene = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera(32, 1, 0.1, 50);
+  scene.add(new THREE.AmbientLight(0xffffff, 0.75));
+  const sun = new THREE.DirectionalLight(0xffffff, 0.6); sun.position.set(-2, 3, 4); scene.add(sun);
+  const R = 1;
+
+  // glass: a fresnel rim with a faint rainbow sheen, like the glass orbs in the earlier levels
+  const glassMat = new THREE.ShaderMaterial({
+    transparent: true, depthWrite: false, side: THREE.DoubleSide,
+    uniforms: { uTint: { value: new THREE.Color(1, 1, 1) } },
+    vertexShader: `varying vec3 vN; varying vec3 vV; varying vec3 vP;
+      void main(){ vec4 mv = modelViewMatrix * vec4(position,1.0); vN = normalize(normalMatrix * normal); vV = normalize(-mv.xyz); vP = position; gl_Position = projectionMatrix * mv; }`,
+    fragmentShader: `varying vec3 vN; varying vec3 vV; varying vec3 vP; uniform vec3 uTint;
+      vec3 hue(float h){ return clamp(abs(mod(h*6.0+vec3(0.0,4.0,2.0),6.0)-3.0)-1.0,0.0,1.0); }
+      void main(){
+        float f = 1.0 - abs(dot(normalize(vN), normalize(vV)));
+        float rim = pow(f, 2.6);
+        vec3 c = mix(uTint, hue(atan(vP.y, vP.x)/6.2832 + 0.5), 0.35 * rim);
+        float spec = pow(max(dot(normalize(vN), normalize(vec3(-0.4,0.6,0.7))),0.0), 60.0);
+        gl_FragColor = vec4(c + spec, clamp(rim * 0.85 + 0.04 + spec, 0.0, 1.0));
+      }` });
+  const glass = new THREE.Mesh(new THREE.SphereGeometry(R, 64, 48), glassMat);
+  glass.renderOrder = 10; scene.add(glass);
+
+  // the phone's own planes: three thin rings (flat / upright portrait / upright landscape)
+  const ringGeo = new THREE.TorusGeometry(R * 1.002, 0.008, 8, 160);
+  const mkRing = rot => { const m = new THREE.Mesh(ringGeo, new THREE.MeshBasicMaterial({ color: 0x8e8e93, transparent: true, opacity: 0.35 })); rot(m); scene.add(m); return m; };
+  const rings = { flat: mkRing(() => {}), port: mkRing(m => m.rotation.x = Math.PI / 2), land: mkRing(m => m.rotation.y = Math.PI / 2) };
+  // ---------- view ----------
+  const VIEWS = { front: [0, 0], tilt: [24, 32], side: [72, 14] };
+  let view = { yaw: 24, pitch: 32 }, viewTarget = { yaw: 24, pitch: 32 };
+  document.querySelectorAll('[data-v]').forEach(b => b.addEventListener('click', () => {
+    const v = VIEWS[b.dataset.v]; viewTarget = { yaw: v[0], pitch: v[1] };
+    document.querySelectorAll('[data-v]').forEach(o => o.setAttribute('aria-pressed', o === b)); }));
+  document.querySelectorAll('#bar button').forEach(b => b.addEventListener('pointerdown', e => e.stopPropagation()));
+
+  let W = 0, H = 0;
+  function resize() { W = stage.clientWidth; H = stage.clientHeight; renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2.5)); renderer.setSize(W, H, false);
+    camera.aspect = W / Math.max(1, H); camera.updateProjectionMatrix(); }
+  new ResizeObserver(resize).observe(stage); resize();
+
+  // ---------- input: tap = reference, drag = orbit (or tilt in the demo) ----------
+  let ref = null, ptr = null;
+  stage.addEventListener('pointerdown', e => { if (!gate.hidden) return; ptr = { x: e.clientX, y: e.clientY, sx: simX, sy: simY, yaw: viewTarget.yaw, pitch: viewTarget.pitch, moved: false }; stage.setPointerCapture(e.pointerId); });
+  stage.addEventListener('pointermove', e => {
+    if (!ptr) return; const dx = e.clientX - ptr.x, dy = e.clientY - ptr.y;
+    if (!ptr.moved && Math.hypot(dx, dy) > 6) ptr.moved = true; if (!ptr.moved) return;
+    if (source === 'demo') { simX = ptr.sx + dx * 0.12; simY = ptr.sy + dy * 0.12; }
+    else { viewTarget = { yaw: ptr.yaw + dx * 0.4, pitch: Math.max(-80, Math.min(80, ptr.pitch + dy * 0.4)) };
+      document.querySelectorAll('[data-v]').forEach(o => o.setAttribute('aria-pressed', 'false')); }
+  });
+  stage.addEventListener('pointercancel', () => { ptr = null; });
+  // the water in the current 3D slice, its surface, and the bubble
+  const clip = new THREE.Plane(new THREE.Vector3(0, 0, -1), 0);
+  const water = new THREE.Mesh(new THREE.SphereGeometry(R * 0.985, 64, 48),
+    new THREE.MeshPhongMaterial({ color: 0xffffff, transparent: true, opacity: 0.22, side: THREE.DoubleSide, depthWrite: false, clippingPlanes: [clip], shininess: 80 }));
+  scene.add(water);
+  const tex = (() => { const c = document.createElement('canvas'); c.width = c.height = 512; const x = c.getContext('2d');
+    x.fillStyle = '#fff'; x.fillRect(0, 0, 512, 512); x.strokeStyle = 'rgba(0,0,0,.16)'; x.lineWidth = 2;
+    for (let r = 64; r < 256; r += 64) { x.beginPath(); x.arc(256, 256, r, 0, Math.PI * 2); x.stroke(); }
+    x.beginPath(); x.moveTo(256, 0); x.lineTo(256, 512); x.moveTo(0, 256); x.lineTo(512, 256); x.stroke();
+    return new THREE.CanvasTexture(c); })();
+  const surfMat = new THREE.MeshPhongMaterial({ color: 0xffffff, map: tex, transparent: true, opacity: 0.86, side: THREE.DoubleSide, shininess: 30 });
+  const surface = new THREE.Mesh(new THREE.CircleGeometry(1, 128), surfMat);
+  scene.add(surface);
+  const bubble = new THREE.Mesh(new THREE.SphereGeometry(0.1, 32, 24), new THREE.MeshPhongMaterial({ color: 0xffffff, emissive: 0x222222, shininess: 120 }));
+  scene.add(bubble);
+  // a faint ghost of the full-size glass, so the slice's shrinking reads against it
+  const ghost = new THREE.Group(); scene.add(ghost);
+  const ghostMat = new THREE.MeshBasicMaterial({ color: 0xbf5af2, transparent: true, opacity: 0.35 });
+  [m => {}, m => m.rotation.x = Math.PI / 2, m => m.rotation.y = Math.PI / 2].forEach(f => { const m = new THREE.Mesh(new THREE.TorusGeometry(R, 0.005, 6, 160), ghostMat); f(m); ghost.add(m); });
+  const Z = new THREE.Vector3(0, 0, 1);
+  const orientTo = (obj, n) => obj.quaternion.setFromUnitVectors(Z, new THREE.Vector3(...n));
+  const glassParts = [glass, rings.flat, rings.port, rings.land];
+
+  // ---------- the fourth direction ----------
+  // 4D "down" n = (g·cos α, sin α): g is real gravity in the phone's frame (two tilt angles), α is how far it has tipped
+  // into w. α comes from turning the phone about the vertical (the gyro's heading, or the compass when there is no gyro),
+  // measured from the heading at start / at the last tap. The demo uses the slider instead.
+  let alphaDeg = 0, yaw0 = null, compass = null, compass0 = null;
+  window.addEventListener('deviceorientation', e => { if (e.alpha != null) compass = e.webkitCompassHeading != null ? -e.webkitCompassHeading : e.alpha; });
+  const wrap = d => ((d + 180) % 360 + 360) % 360 - 180;
+  function heading() {   // degrees, increasing when the phone turns counter-clockwise seen from above
+    if (q && gyroOK) return 2 * Math.atan2(q[3], q[0]) * R2D;
+    if (compass != null) return compass;
+    return null;
+  }
+  function zeroW() { const h = heading(); if (h != null) yaw0 = h; if (compass != null) compass0 = compass; }
+  const sliceIn = $('slice'), sliceV = $('sliceV'), scanBtn = $('scan'), wIn = $('wtilt'), wV = $('wtiltV');
+  let slice = 0, scanning = false, scanT = 0;
+  sliceIn.addEventListener('input', () => { slice = parseFloat(sliceIn.value); if (scanning) { scanning = false; scanBtn.setAttribute('aria-pressed', 'false'); } });
+  scanBtn.addEventListener('click', () => { scanning = !scanning; scanBtn.setAttribute('aria-pressed', String(scanning)); scanT = Math.asin(Math.max(-1, Math.min(1, slice / 0.95))); });
+  wIn.addEventListener('input', () => { wV.textContent = (+wIn.value).toFixed(1) + '°'; });
+  document.querySelectorAll('#bar input').forEach(el => el.addEventListener('pointerdown', e => e.stopPropagation()));
+  const toast = $('toast'); let toastTm = 0;
+  function say(m) { toast.textContent = m; toast.hidden = false; toast.style.opacity = 1; clearTimeout(toastTm); toastTm = setTimeout(() => { toast.style.opacity = 0; }, 1800); }
+  stage.addEventListener('pointerup', () => { if (ptr && !ptr.moved) { if (source === 'demo') { wIn.value = 0; wV.textContent = '0.0°'; } else zeroW(); say('w方向を0°にしました'); } ptr = null; });
+  const showDemoW = () => { $('wDemoRow').hidden = source !== 'demo'; };
+
+  // ---------- the side diagram: the (w, down) plane of 4D ----------
+  const side = $('side'), sx = side.getContext('2d');
+  function drawSide(n3len, nw, w0, level) {
+    const dpr = Math.min(2.5, window.devicePixelRatio || 1), s = side.clientWidth;
+    if (side.width !== Math.round(s * dpr)) { side.width = side.height = Math.round(s * dpr); }
+    sx.setTransform(dpr, 0, 0, dpr, 0, 0); sx.clearRect(0, 0, s, s);
+    const c = s / 2, r = s * 0.4;
+    sx.fillStyle = 'rgba(28,28,30,.85)'; sx.beginPath(); sx.roundRect(0, 0, s, s, 12); sx.fill();
+    // the 4-ball seen edge-on in this plane: a disc; water is the half where (w, h)·(nw, |n3|) ≥ 0  (h measured downward)
+    sx.save(); sx.beginPath(); sx.arc(c, c, r, 0, Math.PI * 2); sx.clip();
+    sx.fillStyle = '#111'; sx.fillRect(0, 0, s, s);
+    const ang = Math.atan2(nw, n3len);   // tilt of "down" toward +w
+    sx.translate(c, c); sx.rotate(-ang); sx.fillStyle = level ? '#e9fbe9' : 'rgba(255,255,255,.85)'; sx.fillRect(-s, 0, 2 * s, s); sx.restore();
+    sx.strokeStyle = 'rgba(255,255,255,.55)'; sx.lineWidth = 1.5; sx.beginPath(); sx.arc(c, c, r, 0, Math.PI * 2); sx.stroke();
+    // the slice: the 3D world we see is the vertical line at w = w0
+    const x = c + w0 * r, hh = Math.sqrt(Math.max(0, 1 - w0 * w0)) * r;
+    sx.strokeStyle = '#bf5af2'; sx.lineWidth = 3; sx.beginPath(); sx.moveTo(x, c - hh); sx.lineTo(x, c + hh); sx.stroke();
+    sx.fillStyle = 'rgba(255,255,255,.7)'; sx.font = `600 10px ${getComputedStyle(document.documentElement).getPropertyValue('--font')}`;
+    sx.textAlign = 'right'; sx.textBaseline = 'bottom'; sx.fillText('w →', s - 6, s - 4);
+    sx.textAlign = 'left'; sx.textBaseline = 'top'; sx.fillText('↓重力', 6, 5);
+    sx.fillStyle = '#e0b3ff'; sx.textAlign = 'center'; sx.fillText('断面', x, Math.max(4, c - hh - 14));
+  }
+
+  // ---------- loop ----------
+  const fmt = v => { let s = (Math.round(v * 10) / 10).toFixed(1); if (s === '-0.0') s = '0.0'; return s; };
+  let shown = 0, shownAt = 0, isLevel = false, gs = [0, 0, -1], sl = [0, 0, -1, 0], slv = [0, 0, 0, 0];
+  const numEl = $('num'), axEl = $('ax'), ayEl = $('ay'), awEl = $('aw'), modeEl = $('mode'), gyroEl = $('gyro');
+  let lastTxt = '', last = performance.now(), textRot = 0, textRotTarget = 0, mode = 'flat';
+  function frame(t) {
+    const dt = Math.max(0, Math.min(0.05, (t - last) / 1000)); last = t;
+    const fused = source === 'motion' && q;
+    const target = source === 'demo' ? simVector() : raw;
+    if (fused) g = qInvRot(q, [0, 0, -1]);
+    else if (target) { const a = 1 - Math.exp(-dt / (source === 'demo' ? 0.05 : 0.16)); g = norm([g[0] + (target[0] - g[0]) * a, g[1] + (target[1] - g[1]) * a, g[2] + (target[2] - g[2]) * a]); }
+    gs = toScreen(g);
+    showDemoW();
+
+    // α: how far 4D gravity has tipped into w
+    let aT;
+    if (source === 'demo') aT = parseFloat(wIn.value);
+    else { const h = heading(); if (h != null && yaw0 == null) zeroW(); aT = h == null ? 0 : wrap(h - yaw0); aT = Math.max(-90, Math.min(90, aT)); }
+    alphaDeg += (aT - alphaDeg) * (1 - Math.exp(-dt / 0.08));
+    const ca = Math.cos(alphaDeg * D2R), sa = Math.sin(alphaDeg * D2R);
+    const n = [gs[0] * ca, gs[1] * ca, gs[2] * ca, sa];      // 4D down, in the phone's frame (x, y, z, w)
+
+    // the reading: 4D angle from the nearest of the phone's own axes (0 = gravity straight along one of them, none in w)
+    const big = Math.max(Math.abs(n[0]), Math.abs(n[1]), Math.abs(n[2]));
+    const value = Math.acos(Math.min(1, big)) * R2D;
+    if (Math.abs(value - shown) >= 0.06 || t - shownAt > 400) { shown = value; shownAt = t; }
+    if (!isLevel && shown < 0.05) isLevel = true; else if (isLevel && shown >= 0.15) isLevel = false;
+    app.classList.toggle('level', isLevel);
+    const txt = fmt(shown); if (txt !== lastTxt) { lastTxt = txt; $('numV').textContent = txt; }
+    axEl.textContent = fmt(Math.asin(Math.max(-1, Math.min(1, gs[0]))) * R2D) + '°';
+    ayEl.textContent = fmt(Math.asin(Math.max(-1, Math.min(1, gs[1]))) * R2D) + '°';
+    awEl.textContent = fmt(alphaDeg) + '°';
+    const tilt = Math.acos(Math.min(1, Math.abs(gs[2]))) * R2D;
+    if (mode === 'flat' && tilt > 50) mode = 'up'; else if (mode === 'up' && tilt < 40) mode = 'flat';
+    const mtxt = (mode === 'flat' ? '4次元の傾き（平置き）' : '4次元の傾き（立てる）') + (isLevel ? ' ・ 4次元でも水平' : Math.abs(alphaDeg) >= 89.5 ? ' ・ 重力がすべて w 方向' : '');
+    if (modeEl.textContent !== mtxt) modeEl.textContent = mtxt;
+    const roll = Math.atan2(-gs[1], gs[0]) * R2D - 90;
+    if (mode === 'up') textRotTarget = roll * D2R; else if (tilt > 22) textRotTarget = Math.round(roll / 90) * 90 * D2R;
+    let dr = textRotTarget - textRot; dr = Math.atan2(Math.sin(dr), Math.cos(dr));
+    textRot += mode === 'up' ? dr : dr * (1 - Math.exp(-dt / 0.12)); textRot = Math.atan2(Math.sin(textRot), Math.cos(textRot));
+    numEl.style.transform = Math.abs(textRot) < 1e-4 ? '' : `rotate(${textRot.toFixed(4)}rad)`;
+    if (fused && String(gyroOK) !== gyroEl.dataset.on) { gyroEl.dataset.on = String(gyroOK); gyroEl.hidden = false; gyroEl.textContent = gyroOK ? 'ジャイロ併用' : 'ジャイロ確認中…'; }
+
+    // the slice position (scan sweeps it back and forth through the 4-ball)
+    if (scanning) { scanT += dt * 0.7; slice = 0.95 * Math.sin(scanT); sliceIn.value = slice.toFixed(2); }
+    sliceV.textContent = (slice >= 0 ? '+' : '−') + Math.abs(slice).toFixed(2);
+
+    // water sloshes in 4D: spring the 4D normal toward n
+    if (reduce) sl = n.slice();
+    else { const k = 70, c = 2 * Math.sqrt(k) * 0.32; for (let i = 0; i < 4; i++) { slv[i] += (k * (n[i] - sl[i]) - c * slv[i]) * dt; sl[i] += slv[i] * dt; }
+      const m = Math.hypot(...sl) || 1; sl = sl.map(v => v / m); }
+
+    // the 3D slice at w = slice: a ball of radius √(1 − w²); inside it the water is n3·x + n_w·w ≥ 0 — a plane whose
+    // height in the slice depends on w (that is how a tilt into the fourth direction shows up for us)
+    const rs = Math.sqrt(Math.max(0.0025, 1 - slice * slice));
+    ghost.visible = rs < 0.995;                                 // the full-size ball, for comparison, once the slice shrinks
+    glassParts.forEach(o => o.scale.setScalar(rs)); water.scale.setScalar(rs);
+    const n3 = [sl[0], sl[1], sl[2]], L3 = Math.hypot(...n3), cw = sl[3] * slice;
+    let u, d;                                                   // unit plane normal (downward) and signed offset: u·x + d ≥ 0 is water
+    if (L3 > 1e-3) { u = n3.map(v => v / L3); d = cw / L3; } else { u = [0, 0, 1]; d = cw >= 0 ? 1e3 : -1e3; }
+    clip.normal.set(u[0], u[1], u[2]); clip.constant = d;
+    // the surface disc: centred at −d·u, radius √(rs² − d²)
+    const inside = Math.abs(d) < rs * 0.985, rr = inside ? Math.sqrt(rs * rs * 0.97 - d * d) : 0;
+    surface.visible = inside && rr > 0.005; bubble.visible = surface.visible;
+    if (surface.visible) {
+      surface.position.set(-d * u[0], -d * u[1], -d * u[2]); surface.scale.setScalar(rr); orientTo(surface, [-u[0], -u[1], -u[2]]);
+      // bubble: on the surface, toward the phone's high side (as in the 3D level)
+      const up = [-u[0], -u[1], -u[2]], planeN = mode === 'flat' ? [0, 0, Math.sign(-gs[2]) || 1] : Math.abs(gs[1]) >= Math.abs(gs[0]) ? [0, Math.sign(-gs[1]) || 1, 0] : [Math.sign(-gs[0]) || 1, 0, 0];
+      let off = [up[0] - planeN[0], up[1] - planeN[1], up[2] - planeN[2]]; const ol = Math.hypot(...off), mag = Math.min(0.8, ol * 1.6) * rr;
+      const pd = dot(off, up); off = [off[0] - up[0] * pd, off[1] - up[1] * pd, off[2] - up[2] * pd]; const on = Math.hypot(...off) || 1;
+      bubble.position.set(surface.position.x + off[0] / on * (ol > 1e-4 ? mag : 0) + up[0] * 0.04, surface.position.y + off[1] / on * (ol > 1e-4 ? mag : 0) + up[1] * 0.04, surface.position.z + off[2] / on * (ol > 1e-4 ? mag : 0) + up[2] * 0.04);
+      bubble.scale.setScalar(Math.min(1, rs * 1.2));
+      bubble.material.color.set(isLevel ? 0x34c759 : 0xffffff);
+    }
+    water.visible = d > -rs;                                     // whole slice dry when the plane lies beyond it
+    surfMat.color.set(isLevel ? 0xe9fbe9 : 0xffffff);
+    const port = Math.abs(gs[1]) >= Math.abs(gs[0]);
+    rings.flat.material.opacity = mode === 'flat' ? 0.8 : 0.2;
+    rings.port.material.opacity = mode === 'up' && port ? 0.8 : 0.2;
+    rings.land.material.opacity = mode === 'up' && !port ? 0.8 : 0.2;
+    glassMat.uniforms.uTint.value.setRGB(...(Math.abs(alphaDeg) > 0.5 ? [0.92, 0.75, 1] : [1, 1, 1]));
+    drawSide(Math.hypot(n[0], n[1], n[2]), n[3], slice, isLevel);
+
+    const e = 1 - Math.exp(-dt / 0.18); view.yaw += (viewTarget.yaw - view.yaw) * e; view.pitch += (viewTarget.pitch - view.pitch) * e;
+    const fit = 1.45 / Math.tan(camera.fov / 2 * D2R) / Math.min(1, camera.aspect);
+    const cy = Math.cos(view.yaw * D2R), sy = Math.sin(view.yaw * D2R), cp = Math.cos(view.pitch * D2R), sp = Math.sin(view.pitch * D2R);
+    camera.position.set(sy * cp * fit, sp * fit, cy * cp * fit); camera.up.set(0, 1, 0); camera.lookAt(0, 0, 0);
+    renderer.render(scene, camera);
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+  if ('serviceWorker' in navigator && window.isSecureContext && location.protocol !== 'file:') navigator.serviceWorker.register('sw.js').catch(() => {});
+  window.__l4 = { set: (sx, sy, base) => { if (base) demoBase = base; simX = sx; simY = sy; }, w: v => { wIn.value = v; wIn.dispatchEvent(new Event('input')); },
+    slice: v => { sliceIn.value = v; sliceIn.dispatchEvent(new Event('input')); }, scan: () => scanBtn.click(), get alpha() { return alphaDeg; } };
+})();
+</script>
+</body></html>
