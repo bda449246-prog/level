@@ -40,6 +40,15 @@ body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--font);overf
 .acts{display:flex;gap:8px}.acts .btn{flex:1;padding:12px;font-size:15px}
 #tSet{background:var(--level);color:#000;font-weight:700}
 #gyro{position:absolute;top:8px;right:12px;font-size:11px;color:rgba(255,255,255,.55);pointer-events:none}
+/* stacked references: one chip per tapped plane, with its angle from the plane before it */
+#refs{position:absolute;left:10px;bottom:30px;display:flex;flex-direction:column;align-items:flex-start;gap:5px;max-width:calc(100% - 100px);z-index:2}
+#refs .chip{display:flex;align-items:center;gap:6px;background:rgba(28,28,30,.86);border-radius:10px;padding:4px 9px;font-size:12px;font-variant-numeric:tabular-nums;white-space:nowrap;pointer-events:none}
+#refs .chip i{width:10px;height:10px;border-radius:50%;flex:none}
+#refs .chip.cur{box-shadow:inset 0 0 0 1.5px rgba(255,255,255,.85)}
+#refs .chip.hit{background:var(--level);color:#000}
+#refs .acts{display:flex;gap:6px}
+#refs .acts button{appearance:none;border:0;background:rgba(28,28,30,.86);color:#fff;font:600 12px var(--font);padding:5px 9px;border-radius:9px;cursor:pointer}
+#refs .acts button:focus-visible{outline:2px solid var(--level);outline-offset:2px}
 #stage{position:relative;flex:1;min-height:0;touch-action:none;cursor:pointer}
 #cv{position:absolute;inset:0;width:100%;height:100%;display:block}
 #bar{flex:none;display:flex;justify-content:center;align-items:center;gap:10px;flex-wrap:wrap;padding:6px 16px calc(12px + env(safe-area-inset-bottom,0px))}
@@ -72,8 +81,9 @@ body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--font);overf
   <div id="stage" aria-label="立体水準器。タップで現在の傾きを基準に設定、ドラッグで視点を回転">
     <canvas id="cv"></canvas>
     <div id="demoNote" hidden>モーションセンサーを使えない環境です。ドラッグすると傾きを再現できます。</div>
-    <div id="hint">タップで基準を設定 ・ ドラッグで視点を回転</div>
+    <div id="hint">タップで基準を追加（重ねられます） ・ ドラッグで視点を回転</div>
     <div id="gyro" hidden></div>
+    <div id="refs" hidden></div>
   </div>
   <div id="bar">
     <div class="seg" role="group" aria-label="視点">
@@ -181,7 +191,7 @@ body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--font);overf
   function enterDemo(msg) { if (msg) $('demoNote').textContent = msg; source = 'demo'; $('demoNote').hidden = false; $('demoSeg').hidden = false;
     hint.textContent = 'ドラッグで傾き ・ タップで基準 ・ 視点は下のボタン'; hint.classList.remove('gone'); }
   document.querySelectorAll('#demoSeg button').forEach(b => b.addEventListener('click', () => {
-    demoBase = b.dataset.d; simX = demoBase === 'flat' ? 3.4 : -7.3; simY = demoBase === 'flat' ? -1.2 : 4; ref = null;
+    demoBase = b.dataset.d; simX = demoBase === 'flat' ? 3.4 : -7.3; simY = demoBase === 'flat' ? -1.2 : 4; clearRefs();
     document.querySelectorAll('#demoSeg button').forEach(o => o.setAttribute('aria-pressed', o === b)); }));
 
   async function start() {
@@ -261,9 +271,17 @@ body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--font);overf
   scene.add(bubble);
 
   // the red reference: the surface as it was when you tapped, fixed to the phone
-  const refDisc = new THREE.Mesh(new THREE.CircleGeometry(R * 1.18, 128), new THREE.MeshBasicMaterial({ color: 0xff3b30, transparent: true, opacity: 0.55, side: THREE.DoubleSide, depthWrite: false }));
-  const refRing = new THREE.Mesh(new THREE.TorusGeometry(R * 1.18, 0.012, 8, 160), new THREE.MeshBasicMaterial({ color: 0xff3b30 }));
-  const refG = new THREE.Group(); refG.add(refDisc, refRing); refG.visible = false; scene.add(refG);
+  // stacked references: every tap adds the plane the water had at that moment, in its own colour, fixed to the phone;
+  // the reading is measured from the newest one, and the chips show how each plane sits relative to the one before it
+  const REF_COLORS = ['#ff3b30', '#ff9f0a', '#ffd60a', '#bf5af2', '#64d2ff', '#ff6ec7'];
+  const MAX_REFS = REF_COLORS.length;
+  const refs = [];
+  function mkRefMesh(color, k) {
+    const r = R * (1.18 + k * 0.05), g = new THREE.Group();
+    g.add(new THREE.Mesh(new THREE.CircleGeometry(r, 128), new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.4, side: THREE.DoubleSide, depthWrite: false })));
+    g.add(new THREE.Mesh(new THREE.TorusGeometry(r, 0.012, 8, 160), new THREE.MeshBasicMaterial({ color })));
+    scene.add(g); return g;
+  }
 
   const Z = new THREE.Vector3(0, 0, 1);
   const orientTo = (obj, n) => obj.quaternion.setFromUnitVectors(Z, new THREE.Vector3(...n));
@@ -283,6 +301,42 @@ body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--font);overf
 
   // ---------- input: tap = reference, drag = orbit (or tilt in the demo) ----------
   let ref = null, ptr = null;
+  const refsEl = document.getElementById('refs');
+  const angBetween = (a, b) => Math.acos(Math.max(-1, Math.min(1, dot(a, b)))) * 180 / Math.PI;
+  const CIRC = ['①', '②', '③', '④', '⑤', '⑥'];
+  function syncRefs() {
+    ref = refs.length ? refs[refs.length - 1].v : null;
+    if (ref) document.documentElement.style.setProperty('--ref', refs[refs.length - 1].color + '66');   // a tint, so the coloured planes stay visible against it
+    renderRefChips();
+  }
+  function addRef() {
+    if (refs.length >= MAX_REFS) { flashMode(`基準は${MAX_REFS}つまでです（「1つ消す」で減らせます）`); return; }
+    const color = REF_COLORS[refs.length];
+    refs.push({ v: gs.slice(), color, mesh: mkRefMesh(color, refs.length) });
+    syncRefs();
+  }
+  function popRef() { const r = refs.pop(); if (r) scene.remove(r.mesh); syncRefs(); }
+  function clearRefs() { while (refs.length) popRef(); }
+  let chipNodes = [];
+  function renderRefChips() {
+    refsEl.innerHTML = ''; chipNodes = [];
+    refsEl.hidden = !refs.length;
+    refs.forEach(r => {
+      const c = document.createElement('div'); c.className = 'chip'; c.innerHTML = `<i style="background:${r.color}"></i><span></span>`;
+      refsEl.appendChild(c); chipNodes.push(c);
+    });
+    if (refs.length) {
+      const acts = document.createElement('div'); acts.className = 'acts';
+      const undo = document.createElement('button'); undo.type = 'button'; undo.textContent = '↶ 1つ消す';
+      const all = document.createElement('button'); all.type = 'button'; all.textContent = 'すべて消す';
+      [undo, all].forEach(b => { b.addEventListener('pointerdown', e => e.stopPropagation()); b.addEventListener('pointerup', e => e.stopPropagation()); });
+      undo.addEventListener('click', e => { e.stopPropagation(); popRef(); });
+      all.addEventListener('click', e => { e.stopPropagation(); clearRefs(); });
+      acts.append(undo, all); refsEl.appendChild(acts);
+    }
+  }
+  let flashText = '', flashUntil = 0;
+  function flashMode(t) { flashText = t; flashUntil = performance.now() + 1800; }
   stage.addEventListener('pointerdown', e => { if (!gate.hidden) return; ptr = { x: e.clientX, y: e.clientY, sx: simX, sy: simY, yaw: viewTarget.yaw, pitch: viewTarget.pitch, moved: false }; stage.setPointerCapture(e.pointerId); });
   stage.addEventListener('pointermove', e => {
     if (!ptr) return; const dx = e.clientX - ptr.x, dy = e.clientY - ptr.y;
@@ -291,7 +345,7 @@ body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--font);overf
     else { viewTarget = { yaw: ptr.yaw + dx * 0.4, pitch: Math.max(-80, Math.min(80, ptr.pitch + dy * 0.4)) };
       document.querySelectorAll('[data-v]').forEach(o => o.setAttribute('aria-pressed', 'false')); }
   });
-  stage.addEventListener('pointerup', () => { if (ptr && !ptr.moved) ref = ref ? null : gs.slice(); ptr = null; });
+  stage.addEventListener('pointerup', () => { if (ptr && !ptr.moved) addRef(); ptr = null; });
   stage.addEventListener('pointercancel', () => { ptr = null; });
 
   // ---------- loop ----------
@@ -367,7 +421,21 @@ body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--font);overf
     const sfx = unit === 'deg' ? '°' : UNITS[unit].s;
     axEl.textContent = fmtU(Math.asin(Math.max(-1, Math.min(1, x))) * R2D) + sfx;
     ayEl.textContent = fmtU(Math.asin(Math.max(-1, Math.min(1, y))) * R2D) + sfx;
-    let mtxt = ref ? '基準からの角度' : mode === 'flat' ? '平置き' : port ? '立てる(縦)' : '立てる(横)';
+    let mtxt = ref ? `基準${CIRC[refs.length - 1]}からの角度` : mode === 'flat' ? '平置き' : port ? '立てる(縦)' : '立てる(横)';
+    // chips: each plane's angle from the one before it (① from the phone lying level), the angle to it right now,
+    // and a green highlight whenever the phone lines up with any of them
+    let older = -1;
+    refs.forEach((r, i) => {
+      const node = chipNodes[i]; if (!node) return;
+      const rel = i === 0 ? angBetween(r.v, [0, 0, -1]) : angBetween(r.v, refs[i - 1].v), now = angBetween(gs, r.v);
+      const relTxt = i === 0 ? `平置きから ${fmtU(rel)}${UNITS[unit].s}` : `${CIRC[i - 1]}から ${fmtU(rel)}${UNITS[unit].s}`;
+      const txtc = `${CIRC[i]} ${relTxt} ・ いま ${fmtU(now)}${UNITS[unit].s}`;
+      const sp = node.lastChild; if (sp.textContent !== txtc) sp.textContent = txtc;
+      const hit = now < 0.1; node.classList.toggle('hit', hit); node.classList.toggle('cur', i === refs.length - 1);
+      if (hit && i < refs.length - 1) older = i;
+    });
+    if (older >= 0) mtxt += ` ・ 基準${CIRC[older]}と一致`;
+    if (performance.now() < flashUntil) mtxt = flashText;
     if (targetDeg != null) { const d = conv(absv) - conv(targetDeg), ds = unit === 'mmm' && Math.abs(d) >= 100 ? String(Math.round(d)) : fmt(d);
       mtxt += isLevel ? ` ・ 目標 ${fmtU(targetDeg)}${sfx} ぴったり` : ` ・ 目標 ${fmtU(targetDeg)}${sfx} まで ${d > 0 ? '−' : '+'}${ds.replace('-', '')}${sfx}`; }
     if (modeEl.textContent !== mtxt) modeEl.textContent = mtxt;
@@ -408,7 +476,7 @@ body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--font);overf
     rings.port.material.opacity = !ref && mode === 'up' && port ? 1 : 0.25;
     rings.land.material.opacity = !ref && mode === 'up' && !port ? 1 : 0.25;
     ticks.visible = !ref && mode === 'flat';
-    refG.visible = !!ref; if (ref) orientTo(refG, [-ref[0], -ref[1], -ref[2]]);
+    refs.forEach(r => orientTo(r.mesh, [-r.v[0], -r.v[1], -r.v[2]]));
     surfMat.color.set(isLevel ? 0xe9fbe9 : 0xffffff);
 
     // camera orbits the sphere; distance fits it to the stage
@@ -422,7 +490,7 @@ body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--font);overf
   }
   requestAnimationFrame(frame);
   if ('serviceWorker' in navigator && window.isSecureContext && location.protocol !== 'file:') navigator.serviceWorker.register('sw.js').catch(() => {});
-  window.__l3 = { get q() { return q; }, get gyroOK() { return gyroOK; }, get gyroVote() { return gyroVote; }, unit: setUnit, target: saveTarget,  set: (sx, sy, base) => { if (base) demoBase = base; simX = sx; simY = sy; }, tapRef: () => { ref = ref ? null : gs.slice(); }, view: v => document.querySelector(`[data-v="${v}"]`).click() };
+  window.__l3 = { get q() { return q; }, get gyroOK() { return gyroOK; }, get gyroVote() { return gyroVote; }, unit: setUnit, target: saveTarget,  set: (sx, sy, base) => { if (base) demoBase = base; simX = sx; simY = sy; }, tapRef: () => addRef(), refs: () => refs.map(r => r.v), clearRefs: () => clearRefs(), view: v => document.querySelector(`[data-v="${v}"]`).click() };
 })();
 </script>
 </body></html>
