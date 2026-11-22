@@ -321,10 +321,6 @@ body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--font);overf
   function renderRefChips() {
     refsEl.innerHTML = ''; chipNodes = [];
     refsEl.hidden = !refs.length;
-    refs.forEach(r => {
-      const c = document.createElement('div'); c.className = 'chip'; c.innerHTML = `<i style="background:${r.color}"></i><span></span>`;
-      refsEl.appendChild(c); chipNodes.push(c);
-    });
     if (refs.length) {
       const acts = document.createElement('div'); acts.className = 'acts';
       const undo = document.createElement('button'); undo.type = 'button'; undo.textContent = '↶ 1つ消す';
@@ -422,19 +418,6 @@ body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--font);overf
     axEl.textContent = fmtU(Math.asin(Math.max(-1, Math.min(1, x))) * R2D) + sfx;
     ayEl.textContent = fmtU(Math.asin(Math.max(-1, Math.min(1, y))) * R2D) + sfx;
     let mtxt = ref ? `基準${CIRC[refs.length - 1]}からの角度` : mode === 'flat' ? '平置き' : port ? '立てる(縦)' : '立てる(横)';
-    // chips: each plane's angle from the one before it (① from the phone lying level), the angle to it right now,
-    // and a green highlight whenever the phone lines up with any of them
-    let older = -1;
-    refs.forEach((r, i) => {
-      const node = chipNodes[i]; if (!node) return;
-      const rel = i === 0 ? angBetween(r.v, [0, 0, -1]) : angBetween(r.v, refs[i - 1].v), now = angBetween(gs, r.v);
-      const relTxt = i === 0 ? `平置きから ${fmtU(rel)}${UNITS[unit].s}` : `${CIRC[i - 1]}から ${fmtU(rel)}${UNITS[unit].s}`;
-      const txtc = `${CIRC[i]} ${relTxt} ・ いま ${fmtU(now)}${UNITS[unit].s}`;
-      const sp = node.lastChild; if (sp.textContent !== txtc) sp.textContent = txtc;
-      const hit = now < 0.1; node.classList.toggle('hit', hit); node.classList.toggle('cur', i === refs.length - 1);
-      if (hit && i < refs.length - 1) older = i;
-    });
-    if (older >= 0) mtxt += ` ・ 基準${CIRC[older]}と一致`;
     if (performance.now() < flashUntil) mtxt = flashText;
     if (targetDeg != null) { const d = conv(absv) - conv(targetDeg), ds = unit === 'mmm' && Math.abs(d) >= 100 ? String(Math.round(d)) : fmt(d);
       mtxt += isLevel ? ` ・ 目標 ${fmtU(targetDeg)}${sfx} ぴったり` : ` ・ 目標 ${fmtU(targetDeg)}${sfx} まで ${d > 0 ? '−' : '+'}${ds.replace('-', '')}${sfx}`; }
