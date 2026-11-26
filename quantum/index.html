@@ -1,0 +1,438 @@
+<!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-status-bar-style" content="black"><meta name="theme-color" content="#000000"><style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);box-sizing:border-box;height:100%}[hidden]{display:none!important}</style></head><body>
+<title>量子水準器</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<style>
+/* Layout: the measurement result on top (left in landscape), the glass Bloch sphere in the middle with the probability bars
+   beside it, and the measurement controls at the bottom. Level palette; outcome + is green, outcome − is red. */
+:root{
+  --bg:#000; --fg:#fff; --level:#34c759; --minus:#ff453a; --muted:#8e8e93; --pill:rgba(44,44,46,.92); --state:#ffffff;
+  --font:-apple-system,BlinkMacSystemFont,"SF Pro Display","Hiragino Sans","Hiragino Kaku Gothic ProN","Helvetica Neue",Arial,sans-serif;
+  color-scheme:dark;
+}
+html,body{height:100%}
+[hidden]{display:none!important}
+body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--font);overflow:hidden;
+  -webkit-user-select:none;user-select:none;-webkit-tap-highlight-color:transparent;-webkit-touch-callout:none}
+#app{position:fixed;inset:0;display:flex;flex-direction:column;background:var(--bg)}
+#read{flex:none;text-align:center;padding:calc(10px + env(safe-area-inset-top,0px)) 16px 0;pointer-events:none}
+#out{display:inline-block;font-weight:200;font-size:clamp(46px,13vmin,96px);line-height:1;font-variant-numeric:tabular-nums;letter-spacing:-1px;transition:color .15s}
+#out.plus{color:var(--level)} #out.minus{color:var(--minus)} #out.sup{color:rgba(255,255,255,.55)}
+#sub{margin-top:5px;font-size:12.5px;color:rgba(255,255,255,.75);font-variant-numeric:tabular-nums;min-height:1.4em}
+#sub b{color:#fff;font-weight:600}
+#theta{margin-top:2px;font-size:12px;color:rgba(255,255,255,.55);font-variant-numeric:tabular-nums}
+#theta b{color:#fff;font-weight:600;font-size:14px}
+#stage{position:relative;flex:1;min-height:0;touch-action:none;cursor:pointer}
+#cv{position:absolute;inset:0;width:100%;height:100%;display:block}
+#prob{position:absolute;right:10px;top:8px;width:132px;pointer-events:none;background:rgba(28,28,30,.82);border-radius:12px;padding:8px 10px;font-size:11px;line-height:1.45}
+#prob .bar{position:relative;height:14px;border-radius:7px;background:#2c2c2e;overflow:hidden;margin:2px 0 5px}
+#prob .bar i{position:absolute;left:0;top:0;bottom:0;border-radius:7px}
+#prob .bar .theo{position:absolute;top:-2px;bottom:-2px;width:2px;background:#fff;opacity:.85}
+#prob .ttl{display:flex;justify-content:space-between;font-variant-numeric:tabular-nums}
+#prob .ttl b{font-weight:700}
+#prob small{display:block;color:rgba(255,255,255,.55);margin-top:2px}
+#legend{position:absolute;left:12px;bottom:10px;font-size:11px;line-height:1.6;color:rgba(255,255,255,.72);pointer-events:none}
+#legend i{font-style:normal;display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:5px;vertical-align:-1px}
+#toast{position:absolute;right:10px;bottom:10px;max-width:52%;padding:7px 12px;border-radius:12px;background:var(--pill);font-size:12px;line-height:1.45;text-align:center;pointer-events:none;transition:opacity .4s}
+#gyro{position:absolute;top:8px;left:12px;font-size:11px;color:rgba(255,255,255,.55);pointer-events:none}
+#hint{position:absolute;top:26px;left:12px;font-size:11.5px;opacity:.7;transition:opacity .6s;pointer-events:none;max-width:48%}
+#hint.gone{opacity:0}
+#demoNote{position:absolute;top:50px;left:12px;max-width:46%;background:var(--pill);font-size:11.5px;line-height:1.4;padding:6px 10px;border-radius:12px;pointer-events:none}
+#bar{flex:none;display:flex;flex-direction:column;gap:8px;padding:6px 12px calc(10px + env(safe-area-inset-bottom,0px))}
+.row{display:flex;justify-content:center;align-items:center;gap:8px;flex-wrap:wrap}
+.seg{display:inline-flex;background:var(--pill);border-radius:9px;padding:2px}
+.seg button{appearance:none;border:0;background:transparent;color:var(--fg);font:500 13px var(--font);padding:6px 10px;border-radius:7px;cursor:pointer}
+.seg button[aria-pressed="true"]{background:#636366}
+.lab{font-size:11px;color:rgba(255,255,255,.55)}
+.act{appearance:none;border:0;background:var(--pill);color:#fff;font:600 14px var(--font);padding:9px 14px;border-radius:12px;cursor:pointer}
+.act.main{background:#fff;color:#000}
+.seg button:focus-visible,.act:focus-visible,#start:focus-visible{outline:2px solid var(--level);outline-offset:2px}
+#gate{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;
+  background:rgba(0,0,0,.85);cursor:pointer;padding:0 22px;text-align:center}
+#gate h1{margin:0;font-size:24px;font-weight:600}
+#gate p{margin:0;font-size:14.5px;line-height:1.65;color:#d1d1d6;max-width:25em}
+#start{display:inline-block;background:var(--fg);color:#000;font:600 17px var(--font);padding:13px 34px;border-radius:999px}
+@media (orientation:landscape) and (max-height:560px){
+  #app{flex-direction:row}
+  #read{width:24%;align-self:center;padding:0 0 0 calc(10px + env(safe-area-inset-left,0px))}
+  #out{font-size:clamp(36px,10vmin,64px)}
+  #stage{flex:1;height:100%}
+  #bar{width:31%;height:100%;box-sizing:border-box;justify-content:center;overflow-y:auto;padding:calc(8px + env(safe-area-inset-top,0px)) calc(10px + env(safe-area-inset-right,0px)) calc(8px + env(safe-area-inset-bottom,0px)) 4px}
+}
+@media (prefers-reduced-motion:reduce){#out,#hint,#toast{transition:none}}
+</style>
+
+<div id="app">
+  <div id="read" aria-live="polite">
+    <div id="out" class="sup">?</div>
+    <div id="sub">まだ測っていません（重ね合わせ）</div>
+    <div id="theta">状態と測定軸の角度 <b id="thv">0.0°</b></div>
+  </div>
+  <div id="stage" aria-label="ブロッホ球。タップで測定、ドラッグで視点を回転">
+    <canvas id="cv"></canvas>
+    <div id="prob" aria-live="off">
+      <div class="ttl"><span>＋になる確率</span><b id="pp">100%</b></div>
+      <div class="bar"><i id="ppBar" style="background:var(--level);width:100%"></i></div>
+      <div class="ttl"><span>－になる確率</span><b id="pm">0%</b></div>
+      <div class="bar"><i id="pmBar" style="background:var(--minus);width:0"></i></div>
+      <div class="ttl"><span>測定した結果</span><b id="cnt">0回</b></div>
+      <div class="bar" title="白い線は理論値"><i id="hBar" style="background:var(--level);width:0"></i><span class="theo" id="hTheo" style="left:100%"></span></div>
+      <small id="hTxt">＋ 0 ・ － 0</small>
+    </div>
+    <div id="legend"><i style="background:#fff"></i>状態（矢印）<br><i style="background:var(--level)"></i>測定軸の＋ <i style="background:var(--minus);margin-left:6px"></i>－<br><i style="background:#64d2ff"></i>重力の向き（準備の向き）</div>
+    <div id="toast" hidden></div>
+    <div id="gyro" hidden></div>
+    <div id="hint">タップで測定 ・ ドラッグで視点</div>
+    <div id="demoNote" hidden>モーションセンサーを使えない環境です。ドラッグすると傾きを再現できます。</div>
+  </div>
+  <div id="bar">
+    <div class="row">
+      <span class="lab">測定軸</span>
+      <div class="seg" role="group" aria-label="測定軸">
+        <button type="button" data-ax="z" aria-pressed="true">画面の向き</button>
+        <button type="button" data-ax="x" aria-pressed="false">左右</button>
+        <button type="button" data-ax="y" aria-pressed="false">上下</button>
+      </div>
+      <span class="lab">強さ</span>
+      <div class="seg" role="group" aria-label="測定の強さ">
+        <button type="button" data-s="1" aria-pressed="true">強い</button>
+        <button type="button" data-s="0.35" aria-pressed="false">弱い</button>
+      </div>
+    </div>
+    <div class="row">
+      <button class="act main" id="meas" type="button">測定する</button>
+      <button class="act" id="ens" type="button">同じ状態を100個測る</button>
+      <button class="act" id="prep" type="button">重力の向きに準備</button>
+    </div>
+    <div class="row">
+      <div class="seg" role="group" aria-label="視点">
+        <button type="button" data-v="front" aria-pressed="false">正面</button>
+        <button type="button" data-v="tilt" aria-pressed="true">斜め</button>
+        <button type="button" data-v="side" aria-pressed="false">横</button>
+      </div>
+      <button class="act" id="clr" type="button">記録を消す</button>
+      <div class="seg" role="group" aria-label="デモの向き" id="demoSeg" hidden>
+        <button type="button" data-d="flat" aria-pressed="true">平置き</button>
+        <button type="button" data-d="up" aria-pressed="false">立てる</button>
+      </div>
+    </div>
+  </div>
+</div>
+<div id="gate" role="button" tabindex="0" aria-label="タップして開始">
+  <h1>量子水準器</h1>
+  <p>ガラス球は、量子のスピン（いちばん小さな磁石）の状態を表す「ブロッホ球」です。白い矢印が状態で、はじめは水準器の水面と同じく本物の重力の向き（真上）にそろえてあります。<br>
+  スマホの軸で測定すると、結果は＋か－のどちらかで、測るまでは決まっていません。傾けた角度で、それぞれになる確率が変わります。<br>
+  測定すると、状態はその結果の向きへ飛び移ります（波束の収縮）。</p>
+  <span id="start">タップして開始</span>
+</div>
+
+<script src="../3d/three.min.js"></script>
+<script>
+(() => {
+  const D2R = Math.PI / 180, R2D = 180 / Math.PI;
+  const $ = id => document.getElementById(id);
+  const app = $('app'), stage = $('stage'), cv = $('cv'), gate = $('gate'), hint = $('hint');
+  const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const norm = v => { const n = Math.hypot(v[0], v[1], v[2]) || 1; return [v[0] / n, v[1] / n, v[2] / n]; };
+  const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+
+  // ---------- sensors (same as the classic level) ----------
+  let raw = null, g = [0.06, -0.02, -1], source = 'demo', lastOrient = null, vote = -4, alive = false;
+  const orientDown = (b, gm) => { const B = b * D2R, G = gm * D2R; return [Math.sin(G) * Math.cos(B), -Math.sin(B), -Math.cos(B) * Math.cos(G)]; };
+  function onOrient(e) { if (e.beta == null || e.gamma == null) return; lastOrient = orientDown(e.beta, e.gamma); alive = true;
+    if (source !== 'motion') { raw = lastOrient; source = 'orient'; } }
+  function onMotion(e) {
+    const a = e.accelerationIncludingGravity; if (!a || a.x == null || a.y == null || a.z == null) return;
+    const n = Math.hypot(a.x, a.y, a.z); if (n < 2) return;
+    const v = [a.x / n, a.y / n, a.z / n];
+    if (lastOrient) { const d = v[1] * lastOrient[1] + v[2] * lastOrient[2]; if (Math.abs(d) > 0.3) vote = Math.max(-40, Math.min(40, vote + (d > 0 ? 1 : -1))); }
+    const s = vote >= 0 ? 1 : -1; raw = [v[0] * s, v[1] * s, v[2] * s]; source = 'motion'; alive = true;
+    fuse(raw, n / 9.81, e.rotationRate);
+  }
+
+  // ---------- gyro fusion ----------
+  // The attitude q (device → world, world z up) is integrated from the gyroscope, and gravity from the accelerometer
+  // slowly pulls it back (a complementary / Mahony filter). The gyro gives a fast, steady surface while the phone moves;
+  // the accelerometer keeps it true over time. The gyro's sign is checked against the accelerometer before it is trusted.
+  let q = null, gyroVote = 0, gyroOK = false, prevA = null, lastFuse = 0, gyroSeen = false;
+  const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+  const qMul = (a, b) => [a[0] * b[0] - a[1] * b[1] - a[2] * b[2] - a[3] * b[3], a[0] * b[1] + a[1] * b[0] + a[2] * b[3] - a[3] * b[2],
+    a[0] * b[2] - a[1] * b[3] + a[2] * b[0] + a[3] * b[1], a[0] * b[3] + a[1] * b[2] - a[2] * b[1] + a[3] * b[0]];
+  const qN = a => { const n = Math.hypot(...a) || 1; return a.map(v => v / n); };
+  const qInvRot = (q, v) => { const c = [q[0], -q[1], -q[2], -q[3]], r = qMul(qMul(c, [0, ...v]), q); return [r[1], r[2], r[3]]; };   // world → device
+  function qFromTo(u, v) { const d = dot(u, v); if (d < -0.9999) return [0, 1, 0, 0]; const c = cross(u, v); return qN([1 + d, ...c]); }
+  function fuse(a, gN, rr) {
+    const now = performance.now(), dt = lastFuse ? Math.min(0.1, (now - lastFuse) / 1000) : 0; lastFuse = now;
+    if (!q) { q = qFromTo(a, [0, 0, -1]); prevA = a; return; }
+    let w = [0, 0, 0];
+    if (rr && rr.alpha != null && rr.beta != null && rr.gamma != null) {
+      gyroSeen = true;
+      const raw = [rr.beta * D2R, rr.gamma * D2R, rr.alpha * D2R];
+      // sign check: the change gravity should show for this rotation vs. the change the accelerometer saw
+      const da = [a[0] - prevA[0], a[1] - prevA[1], a[2] - prevA[2]], pred = cross(a, raw);
+      if (Math.hypot(...raw) > 0.6 && Math.hypot(...da) > 0.004 && Math.abs(gN - 1) < 0.15) {
+        const d = dot(pred, da); if (Math.abs(d) > 1e-6) gyroVote = Math.max(-30, Math.min(30, gyroVote + (d > 0 ? 1 : -1)));
+      }
+      if (!gyroOK && Math.abs(gyroVote) >= 6) gyroOK = true;
+      if (gyroOK) { const sg = gyroVote >= 0 ? 1 : -1; w = raw.map(v => v * sg); }
+    }
+    prevA = a;
+    const dPred = qInvRot(q, [0, 0, -1]), err = cross(a, dPred);
+    const trust = Math.exp(-Math.pow((gN - 1) / 0.08, 2));                  // ignore the accelerometer while it is being shaken
+    const kp = gyroOK ? 1.4 * trust : 6;                                     // without a gyro, follow gravity like the classic level
+    const wt = [w[0] + kp * err[0], w[1] + kp * err[1], w[2] + kp * err[2]];
+    q = qN(qMul(q, [1, wt[0] * dt / 2, wt[1] * dt / 2, wt[2] * dt / 2]));
+  }
+  function screenAngle() { const a = (screen.orientation && typeof screen.orientation.angle === 'number') ? screen.orientation.angle
+    : (typeof window.orientation === 'number' ? window.orientation : 0); return a * D2R; }
+  function toScreen(v) { const a = screenAngle(), c = Math.cos(a), s = Math.sin(a); return [v[0] * c - v[1] * s, v[0] * s + v[1] * c, v[2]]; }
+
+  // demo: drag turns a virtual phone in 3D
+  let demoBase = 'flat', simX = 3.4, simY = -1.2;
+  function simVector() {
+    const ax = simY * D2R, ay = simX * D2R;
+    let v = demoBase === 'flat' ? [0, 0, -1] : [0, -1, 0];
+    if (demoBase === 'flat') v = [v[0] * Math.cos(ay) + v[2] * Math.sin(ay), v[1], -v[0] * Math.sin(ay) + v[2] * Math.cos(ay)];  // about y (left/right)
+    else v = [v[0] * Math.cos(ay) - v[1] * Math.sin(ay), v[0] * Math.sin(ay) + v[1] * Math.cos(ay), v[2]];                           // upright: roll about z
+    v = [v[0], v[1] * Math.cos(ax) - v[2] * Math.sin(ax), v[1] * Math.sin(ax) + v[2] * Math.cos(ax)];            // about x (front/back)
+    return norm(v);
+  }
+  function enterDemo(msg) { if (msg) $('demoNote').textContent = msg; source = 'demo'; $('demoNote').hidden = false; $('demoSeg').hidden = false;
+    hint.classList.add('gone'); }
+  document.querySelectorAll('#demoSeg button').forEach(b => b.addEventListener('click', () => {
+    demoBase = b.dataset.d; simX = demoBase === 'flat' ? 3.4 : -7.3; simY = demoBase === 'flat' ? -1.2 : 4; ref = null;
+    document.querySelectorAll('#demoSeg button').forEach(o => o.setAttribute('aria-pressed', o === b)); }));
+
+  async function start() {
+    if (start.busy) return; start.busy = true; gate.hidden = true;
+    const asks = [];
+    if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function')
+      asks.push(DeviceMotionEvent.requestPermission().catch(() => 'denied'));
+    if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function')
+      asks.push(DeviceOrientationEvent.requestPermission().catch(() => 'denied'));
+    window.addEventListener('deviceorientation', onOrient);
+    window.addEventListener('devicemotion', onMotion);
+    try { if (navigator.wakeLock) navigator.wakeLock.request('screen').catch(() => {}); } catch (_) {}
+    const res = await Promise.all(asks);
+    const ok = res.some(r => r === 'granted') || asks.length === 0;
+    setTimeout(() => { if (!alive) enterDemo(ok ? 'センサーの値が届きませんでした。ドラッグすると傾きを再現できます。'
+      : 'モーションセンサーの利用が許可されませんでした。ドラッグすると傾きを再現できます。'); }, ok ? 1500 : 0);
+    setTimeout(() => { if (source !== 'demo') hint.classList.add('gone'); }, 5000);
+  }
+  gate.addEventListener('click', start);
+  gate.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); start(); } });
+
+  // ---------- 3D scene ----------
+  // Scene axes = the screen: x right, y up, z out of the glass toward you. The glass sphere is fixed to the phone;
+  // the state is prepared along real vertical, the way the level's water keeps its surface level.
+  if (!window.THREE) { $('mode').textContent = '3D表示を読み込めませんでした'; return; }
+  const renderer = new THREE.WebGLRenderer({ canvas: cv, antialias: true, alpha: true });
+    const scene = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera(32, 1, 0.1, 50);
+  scene.add(new THREE.AmbientLight(0xffffff, 0.75));
+  const sun = new THREE.DirectionalLight(0xffffff, 0.6); sun.position.set(-2, 3, 4); scene.add(sun);
+  const R = 1;
+
+  // glass: a fresnel rim with a faint rainbow sheen, like the glass orbs in the earlier levels
+  const glassMat = new THREE.ShaderMaterial({
+    transparent: true, depthWrite: false, side: THREE.DoubleSide,
+    uniforms: { uTint: { value: new THREE.Color(1, 1, 1) } },
+    vertexShader: `varying vec3 vN; varying vec3 vV; varying vec3 vP;
+      void main(){ vec4 mv = modelViewMatrix * vec4(position,1.0); vN = normalize(normalMatrix * normal); vV = normalize(-mv.xyz); vP = position; gl_Position = projectionMatrix * mv; }`,
+    fragmentShader: `varying vec3 vN; varying vec3 vV; varying vec3 vP; uniform vec3 uTint;
+      vec3 hue(float h){ return clamp(abs(mod(h*6.0+vec3(0.0,4.0,2.0),6.0)-3.0)-1.0,0.0,1.0); }
+      void main(){
+        float f = 1.0 - abs(dot(normalize(vN), normalize(vV)));
+        float rim = pow(f, 2.6);
+        vec3 c = mix(uTint, hue(atan(vP.y, vP.x)/6.2832 + 0.5), 0.35 * rim);
+        float spec = pow(max(dot(normalize(vN), normalize(vec3(-0.4,0.6,0.7))),0.0), 60.0);
+        gl_FragColor = vec4(c + spec, clamp(rim * 0.85 + 0.04 + spec, 0.0, 1.0));
+      }` });
+  const glass = new THREE.Mesh(new THREE.SphereGeometry(R, 64, 48), glassMat);
+  glass.renderOrder = 10; scene.add(glass);
+
+  // the phone's own planes: three thin rings (flat / upright portrait / upright landscape)
+  const ringGeo = new THREE.TorusGeometry(R * 1.002, 0.008, 8, 160);
+  const mkRing = rot => { const m = new THREE.Mesh(ringGeo, new THREE.MeshBasicMaterial({ color: 0x8e8e93, transparent: true, opacity: 0.35 })); rot(m); scene.add(m); return m; };
+  const rings = { flat: mkRing(() => {}), port: mkRing(m => m.rotation.x = Math.PI / 2), land: mkRing(m => m.rotation.y = Math.PI / 2) };
+  // the red reference: the surface as it was when you tapped, fixed to the phone
+  const refDisc = new THREE.Mesh(new THREE.CircleGeometry(R * 1.18, 128), new THREE.MeshBasicMaterial({ color: 0xff3b30, transparent: true, opacity: 0.55, side: THREE.DoubleSide, depthWrite: false }));
+  const refRing = new THREE.Mesh(new THREE.TorusGeometry(R * 1.18, 0.012, 8, 160), new THREE.MeshBasicMaterial({ color: 0xff3b30 }));
+  const refG = new THREE.Group(); refG.add(refDisc, refRing); refG.visible = false; scene.add(refG);
+
+  const Z = new THREE.Vector3(0, 0, 1);
+  const orientTo = (obj, n) => obj.quaternion.setFromUnitVectors(Z, new THREE.Vector3(...n));
+  // ---------- view ----------
+  const VIEWS = { front: [0, 0], tilt: [24, 32], side: [72, 14] };
+  let view = { yaw: 24, pitch: 32 }, viewTarget = { yaw: 24, pitch: 32 };
+  document.querySelectorAll('[data-v]').forEach(b => b.addEventListener('click', () => {
+    const v = VIEWS[b.dataset.v]; viewTarget = { yaw: v[0], pitch: v[1] };
+    document.querySelectorAll('[data-v]').forEach(o => o.setAttribute('aria-pressed', o === b)); }));
+  document.querySelectorAll('#bar button').forEach(b => b.addEventListener('pointerdown', e => e.stopPropagation()));
+
+  let W = 0, H = 0;
+  function resize() { W = stage.clientWidth; H = stage.clientHeight; renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2.5)); renderer.setSize(W, H, false);
+    camera.aspect = W / Math.max(1, H); camera.updateProjectionMatrix(); }
+  new ResizeObserver(resize).observe(stage); resize();
+
+  // ---------- input: tap = reference, drag = orbit (or tilt in the demo) ----------
+  let ref = null, ptr = null;
+  stage.addEventListener('pointerdown', e => { if (!gate.hidden) return; ptr = { x: e.clientX, y: e.clientY, sx: simX, sy: simY, yaw: viewTarget.yaw, pitch: viewTarget.pitch, moved: false }; stage.setPointerCapture(e.pointerId); });
+  stage.addEventListener('pointermove', e => {
+    if (!ptr) return; const dx = e.clientX - ptr.x, dy = e.clientY - ptr.y;
+    if (!ptr.moved && Math.hypot(dx, dy) > 6) ptr.moved = true; if (!ptr.moved) return;
+    if (source === 'demo') { simX = ptr.sx + dx * 0.12; simY = ptr.sy + dy * 0.12; }
+    else { viewTarget = { yaw: ptr.yaw + dx * 0.4, pitch: Math.max(-80, Math.min(80, ptr.pitch + dy * 0.4)) };
+      document.querySelectorAll('[data-v]').forEach(o => o.setAttribute('aria-pressed', 'false')); }
+  });
+  stage.addEventListener('pointerup', () => { if (ptr && !ptr.moved) measure(); ptr = null; });
+  stage.addEventListener('pointercancel', () => { ptr = null; });
+  // ---------- quantum state ----------
+  // A spin-½ state is a point on the Bloch sphere (unit vector r, kept in world coordinates so it stays put as the phone turns).
+  // Measuring along axis n gives + with probability (1 + r·n)/2 = cos²(θ/2), where θ is the angle between r and n
+  // — exactly the angle a level would read between the state and the phone's axis.
+  // A strong (projective) measurement moves r onto ±n; a weak one only nudges it (Kraus operators of strength s).
+  const qRot = (q, v) => { const r = qMul(qMul(q, [0, ...v]), [q[0], -q[1], -q[2], -q[3]]); return [r[1], r[2], r[3]]; };   // device → world
+  function fromScreen(v) { const a = -screenAngle(), c = Math.cos(a), s = Math.sin(a); return [v[0] * c - v[1] * s, v[0] * s + v[1] * c, v[2]]; }
+  let rW = [0, 0, 1];                                   // the state, world frame (z up): prepared along real "up"
+  let axisKey = 'z', strength = 1, attitude = [1, 0, 0, 0];
+  const AX = { z: [0, 0, 1], x: [1, 0, 0], y: [0, 1, 0] };   // in screen coordinates
+  const axisWorld = () => norm(qRot(attitude, fromScreen(AX[axisKey])));
+  const stateScreen = () => toScreen(qInvRot(attitude, rW));
+  let last = null, lastAt = -1e9, nPlus = 0, nMinus = 0, histTheo = null, anim = null;
+  function measureOnce(r, n, s) {
+    const c = Math.max(-1, Math.min(1, dot(r, n))), pPlus = (1 + s * c) / 2, plus = Math.random() < pPlus;
+    const a = Math.sqrt((1 + (plus ? s : -s)) / 2), b = Math.sqrt((1 - (plus ? s : -s)) / 2), p = plus ? pPlus : 1 - pPlus;
+    const par = (a * a * (1 + c) - b * b * (1 - c)) / (2 * p);                     // new component along n
+    const perp = [r[0] - c * n[0], r[1] - c * n[1], r[2] - c * n[2]], k = a * b / p;  // shrinks the part across n
+    let r2 = [n[0] * par + perp[0] * k, n[1] * par + perp[1] * k, n[2] * par + perp[2] * k];
+    const L = Math.hypot(...r2); r2 = L > 1e-9 ? r2.map(v => v / L) : (plus ? n.slice() : n.map(v => -v));
+    return { plus, r2, pPlus: (1 + c) / 2 };
+  }
+  function measure() {
+    const n = axisWorld(), res = measureOnce(rW, n, strength);
+    if (!reduce) anim = { from: rW.slice(), to: res.r2, t: 0 }; rW = res.r2;
+    last = res.plus; lastAt = performance.now(); flash = 1;
+    if (res.plus) nPlus++; else nMinus++; histTheo = res.pPlus;
+    if (navigator.vibrate) try { navigator.vibrate(res.plus ? 15 : [10, 40, 10]); } catch (_) {}
+    updHist();
+  }
+  function ensemble() {   // 100 identical copies of the current state, each measured once (the state itself is left alone)
+    const n = axisWorld(); let p = 0;
+    for (let i = 0; i < 100; i++) { if (measureOnce(rW, n, 1).plus) { nPlus++; p++; } else nMinus++; }
+    histTheo = (1 + dot(rW, n)) / 2; updHist();
+    toast(`100個のうち ＋ が ${p}個、－ が ${100 - p}個（理論値 ＋${Math.round(histTheo * 100)}%）`);
+  }
+  function prepare() { rW = [0, 0, 1]; last = null; anim = null; toast('状態を重力の向き（真上）に準備し直しました'); }
+  function updHist() {
+    const N = nPlus + nMinus; $('cnt').textContent = `${N}回`; $('hTxt').textContent = `＋ ${nPlus} ・ － ${nMinus}` + (N ? `（＋${Math.round(nPlus / N * 100)}%）` : '');
+    $('hBar').style.width = N ? `${nPlus / N * 100}%` : '0'; $('hTheo').style.left = histTheo == null ? '100%' : `calc(${histTheo * 100}% - 1px)`;
+    $('hTheo').hidden = histTheo == null;
+  }
+  function toast(m) { const el = $('toast'); el.textContent = m; el.hidden = false; el.style.opacity = 1; clearTimeout(toast.t); toast.t = setTimeout(() => { el.style.opacity = 0; }, 3200); }
+  const bind = (id, fn) => { const b = $(id); b.addEventListener('pointerdown', e => e.stopPropagation()); b.addEventListener('click', e => { e.stopPropagation(); fn(); }); };
+  bind('meas', measure); bind('ens', ensemble); bind('prep', prepare);
+  bind('clr', () => { nPlus = nMinus = 0; histTheo = null; updHist(); });
+  document.querySelectorAll('[data-ax]').forEach(b => b.addEventListener('click', () => { axisKey = b.dataset.ax; document.querySelectorAll('[data-ax]').forEach(o => o.setAttribute('aria-pressed', o === b)); }));
+  document.querySelectorAll('[data-s]').forEach(b => b.addEventListener('click', () => { strength = parseFloat(b.dataset.s); document.querySelectorAll('[data-s]').forEach(o => o.setAttribute('aria-pressed', o === b)); }));
+  updHist();
+
+  // ---------- 3D: state arrow, measurement axis, gravity ----------
+  const dotTex = (() => { const c = document.createElement('canvas'); c.width = c.height = 64; const x = c.getContext('2d');
+    const gr = x.createRadialGradient(32, 32, 0, 32, 32, 32); gr.addColorStop(0, 'rgba(255,255,255,1)'); gr.addColorStop(0.4, 'rgba(255,255,255,.5)'); gr.addColorStop(1, 'rgba(255,255,255,0)');
+    x.fillStyle = gr; x.fillRect(0, 0, 64, 64); return new THREE.CanvasTexture(c); })();
+  function arrow(color, len, rad, head) {
+    const g = new THREE.Group(), m = new THREE.MeshPhongMaterial({ color, emissive: color, emissiveIntensity: 0.25, shininess: 80 });
+    const shaft = new THREE.Mesh(new THREE.CylinderGeometry(rad, rad, len - head, 16), m); shaft.position.y = (len - head) / 2;
+    const tip = new THREE.Mesh(new THREE.ConeGeometry(rad * 2.6, head, 20), m); tip.position.y = len - head / 2;
+    g.add(shaft, tip); scene.add(g); return { g, m };
+  }
+  const stateArrow = arrow(0xffffff, 0.98, 0.022, 0.14);
+  const stateTip = new THREE.Sprite(new THREE.SpriteMaterial({ map: dotTex, color: 0xffffff, transparent: true, opacity: 0.9, depthWrite: false, blending: THREE.AdditiveBlending }));
+  stateTip.scale.setScalar(0.22); scene.add(stateTip);
+  // the measurement axis: a rod through the sphere, + end green, − end red; each end glows with its probability
+  const axisRod = new THREE.Mesh(new THREE.CylinderGeometry(0.008, 0.008, 2.36, 10), new THREE.MeshBasicMaterial({ color: 0x8e8e93, transparent: true, opacity: 0.8 }));
+  scene.add(axisRod);
+  const endP = new THREE.Mesh(new THREE.SphereGeometry(0.06, 20, 14), new THREE.MeshBasicMaterial({ color: 0x34c759 }));
+  const endM = new THREE.Mesh(new THREE.SphereGeometry(0.06, 20, 14), new THREE.MeshBasicMaterial({ color: 0xff453a }));
+  const glowP = new THREE.Sprite(new THREE.SpriteMaterial({ map: dotTex, color: 0x34c759, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending }));
+  const glowM = new THREE.Sprite(new THREE.SpriteMaterial({ map: dotTex, color: 0xff453a, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending }));
+  scene.add(endP, endM, glowP, glowM);
+  // the direction of real gravity ("up"), where the state is prepared — like the level's water surface normal
+  const upLine = new THREE.Mesh(new THREE.CylinderGeometry(0.006, 0.006, 1.1, 8), new THREE.MeshBasicMaterial({ color: 0x64d2ff, transparent: true, opacity: 0.55 }));
+  scene.add(upLine);
+  // a cone of possibility: the circle of states at the same angle θ from the axis (all give the same probabilities)
+  const latGeo = new THREE.TorusGeometry(1, 0.006, 6, 128), lat = new THREE.Mesh(latGeo, new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.3 }));
+  scene.add(lat);
+  let flash = 0;
+  const Yv = new THREE.Vector3(0, 1, 0), Zv = new THREE.Vector3(0, 0, 1);
+
+  // ---------- loop ----------
+  const fmt = v => { let s = (Math.round(v * 10) / 10).toFixed(1); if (s === '-0.0') s = '0.0'; return s; };
+  let gs = [0, 0, -1], lastT = performance.now(), shownTxt = '', factAt = 0;
+  const outEl = $('out'), subEl = $('sub'), gyroEl = $('gyro');
+  function slerp(a, b, k) { const d = Math.max(-1, Math.min(1, dot(a, b))), w = Math.acos(d); if (w < 1e-4) return b.slice();
+    const s = Math.sin(w), x = Math.sin((1 - k) * w) / s, y = Math.sin(k * w) / s; return norm([a[0] * x + b[0] * y, a[1] * x + b[1] * y, a[2] * x + b[2] * y]); }
+  function frame(t) {
+    const dt = Math.max(0, Math.min(0.05, (t - lastT) / 1000)); lastT = t;
+    const fused = source === 'motion' && q;
+    const target = source === 'demo' ? simVector() : raw;
+    if (fused) g = qInvRot(q, [0, 0, -1]);
+    else if (target) { const a = 1 - Math.exp(-dt / (source === 'demo' ? 0.05 : 0.16)); g = norm([g[0] + (target[0] - g[0]) * a, g[1] + (target[1] - g[1]) * a, g[2] + (target[2] - g[2]) * a]); }
+    gs = toScreen(g);
+    // the phone's attitude: from the gyro fusion when available, otherwise from gravity alone (turning flat on a table is then invisible)
+    attitude = fused && gyroOK ? q : qFromTo(g, [0, 0, -1]);
+    if (fused && String(gyroOK) !== gyroEl.dataset.on) { gyroEl.dataset.on = String(gyroOK); gyroEl.hidden = false; gyroEl.textContent = gyroOK ? 'ジャイロ併用' : 'ジャイロ確認中…'; }
+
+    // collapse animation (the arrow swings to its new place)
+    let rWv = rW;
+    if (anim) { anim.t += dt / 0.28; const k = Math.min(1, anim.t); rWv = slerp(anim.from, anim.to, 1 - Math.pow(1 - k, 3)); if (k >= 1) anim = null; }
+    const rS = toScreen(qInvRot(attitude, rWv)), n = AX[axisKey];
+    const c = Math.max(-1, Math.min(1, dot(toScreen(qInvRot(attitude, rW)), n))), theta = Math.acos(c) * R2D, pPlus = (1 + c) / 2;
+
+    // readout: certain after a strong measurement if nothing has moved; otherwise a superposition until you measure
+    const now = performance.now(), certain = theta < 0.5 || theta > 179.5;
+    let cls, txt, sub;
+    if (certain) { const plus = theta < 90; cls = plus ? 'plus' : 'minus'; txt = plus ? '＋1' : '－1';
+      sub = last == null ? '状態は測定軸とそろっています（結果は確定）' : 'もう一度同じ軸で測っても、同じ結果になります'; }
+    else if (last != null && now - lastAt < 1400) { cls = last ? 'plus' : 'minus'; txt = last ? '＋1' : '－1'; sub = strength < 1 ? '弱い測定：状態は少しだけ引き寄せられました' : '測定で、状態が結果の向きへ移りました'; }
+    else { cls = 'sup'; txt = '?'; sub = `重ね合わせ：<b>＋ ${Math.round(pPlus * 100)}%</b> ・ <b>－ ${Math.round((1 - pPlus) * 100)}%</b>`; }
+    if (outEl.className !== cls) outEl.className = cls;
+    if (outEl.textContent !== txt) outEl.textContent = txt;
+    if (shownTxt !== sub) { shownTxt = sub; subEl.innerHTML = sub; }
+    if (t - factAt > 120) { factAt = t;
+      $('thv').textContent = fmt(theta) + '°';
+      $('pp').textContent = `${(pPlus * 100).toFixed(1)}%`; $('pm').textContent = `${((1 - pPlus) * 100).toFixed(1)}%`;
+      $('ppBar').style.width = `${pPlus * 100}%`; $('pmBar').style.width = `${(1 - pPlus) * 100}%`; }
+
+    // 3D
+    stateArrow.g.quaternion.setFromUnitVectors(Yv, new THREE.Vector3(...rS));
+    stateTip.position.set(rS[0] * 0.98, rS[1] * 0.98, rS[2] * 0.98);
+    flash = Math.max(0, flash - dt * 2.5); stateTip.scale.setScalar(0.22 + 0.4 * flash);
+    const nv = new THREE.Vector3(...n);
+    axisRod.quaternion.setFromUnitVectors(Yv, nv);
+    endP.position.copy(nv).multiplyScalar(1.18); endM.position.copy(nv).multiplyScalar(-1.18);
+    glowP.position.copy(endP.position); glowM.position.copy(endM.position);
+    glowP.scale.setScalar(0.12 + 0.5 * pPlus); glowM.scale.setScalar(0.12 + 0.5 * (1 - pPlus));
+    glowP.material.opacity = 0.25 + 0.75 * pPlus; glowM.material.opacity = 0.25 + 0.75 * (1 - pPlus);
+    const up = toScreen(qInvRot(attitude, [0, 0, 1]));
+    upLine.quaternion.setFromUnitVectors(Yv, new THREE.Vector3(...up)); upLine.position.set(up[0] * 0.55, up[1] * 0.55, up[2] * 0.55);
+    const sinT = Math.sqrt(Math.max(0, 1 - c * c));
+    lat.visible = sinT > 0.02; lat.position.copy(nv).multiplyScalar(c); lat.scale.set(sinT, sinT, 1); lat.quaternion.setFromUnitVectors(Zv, nv);
+    rings.flat.material.opacity = axisKey === 'z' ? 0.6 : 0.18; rings.port.material.opacity = axisKey === 'y' ? 0.6 : 0.18; rings.land.material.opacity = axisKey === 'x' ? 0.6 : 0.18;
+    glassMat.uniforms.uTint.value.setRGB(...(certain ? (theta < 90 ? [0.6, 1, 0.7] : [1, 0.6, 0.6]) : [1, 1, 1]));
+
+    const e = 1 - Math.exp(-dt / 0.18); view.yaw += (viewTarget.yaw - view.yaw) * e; view.pitch += (viewTarget.pitch - view.pitch) * e;
+    const fit = 1.5 / Math.tan(camera.fov / 2 * D2R) / Math.min(1, camera.aspect);
+    const cy = Math.cos(view.yaw * D2R), sy = Math.sin(view.yaw * D2R), cp = Math.cos(view.pitch * D2R), sp = Math.sin(view.pitch * D2R);
+    camera.position.set(sy * cp * fit, sp * fit, cy * cp * fit); camera.up.set(0, 1, 0); camera.lookAt(0, 0, 0);
+    renderer.render(scene, camera);
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+  if ('serviceWorker' in navigator && window.isSecureContext && location.protocol !== 'file:') navigator.serviceWorker.register('sw.js').catch(() => {});
+  window.__qm = { set: (sx, sy, base) => { if (base) demoBase = base; simX = sx; simY = sy; }, measure, ensemble, prepare, axis: k => document.querySelector(`[data-ax="${k}"]`).click(),
+    strength: k => document.querySelector(`[data-s="${k}"]`).click(), get counts() { return [nPlus, nMinus]; }, get r() { return rW.slice(); } };
+})();
+</script>
+
+</body></html>
