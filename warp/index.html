@@ -19,16 +19,7 @@ body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--font);overf
 #gl{position:absolute;inset:0;width:100%;height:100%;display:none;pointer-events:none}
 body.warp-on #gl{display:block}
 body.warp-on #cv{opacity:0}
-#warpBar{display:inline-flex}
-/* shape of the drawn lines and circles: smooth curves or kinked polylines, with an adjustable amount */
-#shapeBar{position:absolute;right:max(12px,env(safe-area-inset-right,0px));bottom:44px;z-index:2;display:flex;flex-direction:column;align-items:flex-start;gap:6px;
-  background:rgba(28,28,30,.82);border-radius:14px;padding:7px 9px;font-size:12px;color:#e5e5ea}
-#shapeBar .seg{background:rgba(58,58,60,.9)}
-#shapeBar label,#shapeBar .rowl{display:flex;align-items:center;gap:6px;white-space:nowrap}
-#shapeBar input[type=range]{width:118px;accent-color:#34c759}
-#shapeBar output{min-width:2.6em;text-align:right;font-variant-numeric:tabular-nums}
-#shapeBar input[type=checkbox]{accent-color:#34c759;width:16px;height:16px;margin:0}
-#shapeBar input:focus-visible{outline:2px solid #34c759;outline-offset:2px}
+#warpBar{position:absolute;right:max(12px,env(safe-area-inset-right,0px));bottom:48px;z-index:2}
 
 #demo{position:absolute;top:12px;left:max(16px,env(safe-area-inset-left,0px));right:max(16px,env(safe-area-inset-right,0px));
   display:flex;flex-wrap:wrap;gap:8px 10px;align-items:center;justify-content:center;pointer-events:none}
@@ -64,13 +55,7 @@ body.warp-on #cv{opacity:0}
   <div id="stage" aria-label="水準器。タップで現在の角度を基準に設定">
     <canvas id="cv"></canvas>
     <canvas id="gl" aria-hidden="true"></canvas>
-    <div id="shapeBar" role="group" aria-label="線と円の形">
-      <div class="seg" role="group" aria-label="線と円の形"><button type="button" data-sh="none" aria-pressed="true">そのまま</button><button type="button" data-sh="curve" aria-pressed="false">曲線</button><button type="button" data-sh="poly" aria-pressed="false">折れ線</button></div>
-      <label>度合い <input id="shAmt" type="range" min="0" max="100" value="60" aria-label="曲がりの度合い"><output id="shAmtV">60%</output></label>
-      <label><input id="shLink" type="checkbox" checked> 傾きに連動（0°で元の形）</label>
-      <div class="rowl">画面 <div class="seg" id="warpBar" role="group" aria-label="画面の変形"><button type="button" data-k="wave" aria-pressed="false">うねり</button><button type="button" data-k="fold" aria-pressed="false">折れ</button><button type="button" data-k="flat" aria-pressed="true">平ら</button></div></div>
-    </div>
-    
+    <div class="seg" id="warpBar" role="group" aria-label="画面の変形"><button type="button" data-k="wave" aria-pressed="true">うねり</button><button type="button" data-k="fold" aria-pressed="false">折れ</button><button type="button" data-k="flat" aria-pressed="false">平ら</button></div>
     <div id="demo" hidden>
       <div class="note">モーションセンサーを使えない環境です。画面をドラッグすると傾きを再現できます。</div>
       <div class="seg" role="group" aria-label="デモの向き">
@@ -101,8 +86,6 @@ body.warp-on #cv{opacity:0}
 </div>
 
 <script>
-// how the level's own lines and circles are drawn: 'none' (true circles and straight lines), 'curve' (wavy), 'poly' (kinked)
-window.__shape = { kind: 'none', amt: 0.6, link: true, phase: 0 };
 (() => {
   const D2R = Math.PI / 180, R2D = 180 / Math.PI;
   const stage = document.getElementById('stage');
@@ -299,10 +282,6 @@ window.__shape = { kind: 'none', amt: 0.6, link: true, phase: 0 };
 
     ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
     const cx = W / 2, cy = H / 2, m = Math.min(W, H);
-    // shape of lines and circles: the slider sets the amount; when linked, it also grows with the reading (0° = true shapes)
-    const SH = window.__shape;
-    if (!matchMedia('(prefers-reduced-motion: reduce)').matches) SH.phase += dt * 0.7;
-    const shAmt = SH.kind === 'none' ? 0 : SH.amt * (SH.link ? Math.min(1, Math.abs(value) / 15) : 1);
     rotC = [cx, cy];
     // upright keeps a black sky; the reference shows up as its own red ground instead of a red screen
     ctx.fillStyle = mode === 'up' ? C.bg : bg; ctx.fillRect(0, 0, W, H);
@@ -313,20 +292,7 @@ window.__shape = { kind: 'none', amt: 0.6, link: true, phase: 0 };
       const off = Math.min(value * R * 0.055, R * 1.25);
       const ux = dl > 1e-6 ? dir[0] / dl : 0, uy = dl > 1e-6 ? -dir[1] / dl : 0;
       const c1 = [cx + ux * off, cy + uy * off], c2 = [cx - ux * off, cy - uy * off];
-      const circ = c => {
-        ctx.beginPath();
-        if (shAmt < 0.002) { ctx.arc(c[0], c[1], R, 0, Math.PI * 2); return; }
-        if (SH.kind === 'curve') {          // a smoothly wobbling outline
-          for (let i = 0; i <= 160; i++) { const th = i / 160 * Math.PI * 2;
-            const r = R * (1 + 0.14 * shAmt * Math.sin(5 * th + SH.phase) + 0.06 * shAmt * Math.sin(3 * th - SH.phase * 1.3));
-            i ? ctx.lineTo(c[0] + Math.cos(th) * r, c[1] + Math.sin(th) * r) : ctx.moveTo(c[0] + Math.cos(th) * r, c[1] + Math.sin(th) * r); }
-        } else {                             // a kinked polygon: fewer, sharper corners as the amount grows
-          const N = 2 * Math.round(32 - 26 * shAmt);
-          for (let i = 0; i < N; i++) { const th = i / N * Math.PI * 2 + SH.phase * 0.25, r = R * (1 + (i % 2 ? -1 : 1) * 0.17 * shAmt);
-            i ? ctx.lineTo(c[0] + Math.cos(th) * r, c[1] + Math.sin(th) * r) : ctx.moveTo(c[0] + Math.cos(th) * r, c[1] + Math.sin(th) * r); }
-        }
-        ctx.closePath();
-      };
+      const circ = c => { ctx.beginPath(); ctx.arc(c[0], c[1], R, 0, Math.PI * 2); };
       ctx.fillStyle = C.fg; circ(c1); ctx.fill(); circ(c2); ctx.fill();
       ctx.save(); circ(c1); ctx.clip(); ctx.fillStyle = bg; circ(c2); ctx.fill(); ctx.restore();
 
@@ -342,16 +308,7 @@ window.__shape = { kind: 'none', amt: 0.6, link: true, phase: 0 };
       const span = 3 * Math.hypot(W, H);
       const plane = (ang, sh) => {
         ctx.translate(cx, cy); ctx.rotate(ang - Math.PI / 2);
-        ctx.beginPath();
-        if (shAmt < 0.002) ctx.rect(-span, sh, span * 2, span);
-        else {                               // the ground's edge — the horizon / reference line — as a wave or a zigzag
-          const lam = m * 0.34, A = m * 0.07 * shAmt;
-          ctx.moveTo(-span, sh + span);
-          if (SH.kind === 'curve') { for (let xx = -span; xx <= span; xx += lam / 16) ctx.lineTo(xx, sh + A * Math.sin(2 * Math.PI * xx / lam + SH.phase * 2)); }
-          else { const half = lam / 2, off = (SH.phase * 0.4 * lam) % lam; let k = Math.floor((-span - off) / half);
-            for (let xx = k * half + off; xx <= span + half; xx += half, k++) ctx.lineTo(xx, sh + (k % 2 ? A : -A)); }
-          ctx.lineTo(span, sh + span); ctx.closePath();
-        }
+        ctx.beginPath(); ctx.rect(-span, sh, span * 2, span);
         ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
       };
       const shift = Math.max(-0.45, Math.min(0.45, -z * 0.5)) * H;
@@ -410,7 +367,7 @@ window.__shape = { kind: 'none', amt: 0.6, link: true, phase: 0 };
   new ResizeObserver(build).observe(stage); build();
 
   // ---- controls ----
-  let kind = 'flat', amt = 1;
+  let kind = 'wave', amt = 1;
   try { const k = localStorage.getItem('warpKind'); if (['wave', 'fold', 'flat'].includes(k)) kind = k; } catch (_) {}
   const bar = document.getElementById('warpBar');
   bar.querySelectorAll('[data-k]').forEach(b => {
@@ -419,18 +376,6 @@ window.__shape = { kind: 'none', amt: 0.6, link: true, phase: 0 };
     b.addEventListener('click', e => { e.stopPropagation(); kind = b.dataset.k; try { localStorage.setItem('warpKind', kind); } catch (_) {}
       bar.querySelectorAll('[data-k]').forEach(o => o.setAttribute('aria-pressed', o === b)); });
   });
-
-  // ---- line / circle shape controls ----
-  const SH = window.__shape, shBar = document.getElementById('shapeBar'), shAmtEl = document.getElementById('shAmt'), shAmtV = document.getElementById('shAmtV'), shLink = document.getElementById('shLink');
-  try { const o = JSON.parse(localStorage.getItem('warpShape') || 'null'); if (o) { if (['none', 'curve', 'poly'].includes(o.kind)) SH.kind = o.kind; if (o.amt >= 0 && o.amt <= 1) SH.amt = o.amt; SH.link = o.link !== false; } } catch (_) {}
-  const saveSh = () => { try { localStorage.setItem('warpShape', JSON.stringify({ kind: SH.kind, amt: SH.amt, link: SH.link })); } catch (_) {} };
-  const syncSh = () => { shBar.querySelectorAll('[data-sh]').forEach(b => b.setAttribute('aria-pressed', b.dataset.sh === SH.kind));
-    shAmtEl.value = Math.round(SH.amt * 100); shAmtV.textContent = `${Math.round(SH.amt * 100)}%`; shLink.checked = SH.link; };
-  ['pointerdown', 'pointerup', 'click'].forEach(ev => shBar.addEventListener(ev, e => e.stopPropagation()));
-  shBar.querySelectorAll('[data-sh]').forEach(b => b.addEventListener('click', () => { SH.kind = b.dataset.sh; syncSh(); saveSh(); }));
-  shAmtEl.addEventListener('input', () => { SH.amt = shAmtEl.value / 100; shAmtV.textContent = `${shAmtEl.value}%`; saveSh(); });
-  shLink.addEventListener('change', () => { SH.link = shLink.checked; saveSh(); });
-  syncSh();
 
   // ---- deformation ----
   const FOLD_X = 4;
