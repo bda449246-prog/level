@@ -311,10 +311,8 @@ body.ar #read,body.ar #bar{text-shadow:0 1px 3px rgba(0,0,0,.7)}
     c.font = `200 230px ${F}`; const w = c.measureText(txt).width;
     c.font = wide ? `400 84px ${F}` : `200 230px ${F}`; const uw = c.measureText(unitS).width;
     const x0 = 512 - (wide ? (w + uw + 14) / 2 - w / 2 : 0);     // the degree sign hangs off the right; wider units are centred with the digits
-    // a smoky glass badge behind the digits, so they read over white water and over the camera image alike
-    const bw = w + (wide ? uw + 14 : uw * 0.6) + 120, bx = 512 - bw / 2 + (wide ? 0 : uw * 0.3);
-    c.fillStyle = 'rgba(10,12,16,.55)'; c.beginPath(); c.roundRect(bx, 266 - 150, bw, 300, 150); c.fill();
-    c.strokeStyle = 'rgba(255,255,255,.28)'; c.lineWidth = 4; c.stroke();
+    // just the characters; a soft shadow (no frame) keeps them readable over the white water and the camera image
+    c.shadowColor = 'rgba(0,0,0,.75)'; c.shadowBlur = 18;
     c.font = `200 230px ${F}`; c.fillStyle = color; c.fillText(txt, x0, 270);
     c.font = wide ? `400 84px ${F}` : `200 230px ${F}`; c.textAlign = 'left';
     const ux = x0 + w / 2 + (wide ? 14 : 0), uy = wide ? 304 : 270;
