@@ -1,0 +1,552 @@
+<!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-status-bar-style" content="black"><meta name="apple-mobile-web-app-title" content="立体水準器"><meta name="theme-color" content="#000000"><link rel="apple-touch-icon" href="../3d/icon-180.png"><style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);box-sizing:border-box;height:100%}[hidden]{display:none!important}</style></head><body>
+<title>立体水準器AR</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<style>
+/* Layout: the reading sits on top (left in landscape) in the iOS level's thin numerals; the 3D glass sphere fills the rest.
+   Same palette as the other levels: black, white, green when level, red when a reference is set. */
+:root{
+  --bg:#000; --fg:#fff; --level:#34c759; --ref:#ff3b30; --muted:#8e8e93; --pill:rgba(44,44,46,.92);
+  --font:-apple-system,BlinkMacSystemFont,"SF Pro Display","Hiragino Sans","Hiragino Kaku Gothic ProN","Helvetica Neue",Arial,sans-serif;
+  color-scheme:dark;
+}
+html,body{height:100%}
+[hidden]{display:none!important}
+body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--font);overflow:hidden;
+  -webkit-user-select:none;user-select:none;-webkit-tap-highlight-color:transparent;-webkit-touch-callout:none}
+#app{position:fixed;inset:0;display:flex;flex-direction:column;background:var(--bg);transition:background-color .25s}
+#app.level{background:var(--level)}
+#app.ref{background:var(--ref)}
+#read{flex:none;text-align:center;padding:calc(18px + env(safe-area-inset-top,0px)) 16px 4px;pointer-events:none}
+#num{display:inline-block;font-weight:200;font-size:clamp(56px,17vmin,120px);line-height:1;font-variant-numeric:tabular-nums;letter-spacing:-1px;will-change:transform}
+#num .unit{display:inline-block;width:0;overflow:visible}
+#num .unit.wide{width:auto;font-size:.36em;font-weight:400;margin-left:.15em;letter-spacing:0}
+#axes{margin-top:8px;display:flex;justify-content:center;gap:18px;font-size:13px;color:rgba(255,255,255,.72);font-variant-numeric:tabular-nums}
+#axes b{font-weight:600;color:#fff;margin-left:4px}
+#mode{margin-top:6px;font-size:12px;color:rgba(255,255,255,.6)}
+#mode.hit{color:#fff;font-weight:600}
+.btn{appearance:none;border:0;background:var(--pill);color:var(--fg);font:500 13px var(--font);padding:8px 12px;border-radius:9px;cursor:pointer}
+.btn.on{background:var(--level);color:#000;font-weight:600}
+.btn:focus-visible{outline:2px solid var(--level);outline-offset:2px}
+#sheet{position:fixed;inset:0;display:flex;align-items:flex-end;justify-content:center;background:rgba(0,0,0,.55);z-index:5}
+#sheet .card{box-sizing:border-box;width:min(440px,100%);background:#1c1c1e;border-radius:20px 20px 0 0;padding:18px 18px calc(18px + env(safe-area-inset-bottom,0px))}
+#sheet h2{margin:0 0 4px;font-size:17px}
+#sheet p{margin:0 0 12px;font-size:12.5px;color:#aeaeb2;line-height:1.5}
+.row{display:flex;gap:8px;align-items:center;margin-bottom:12px}
+#tIn{flex:1;min-width:0;font:300 30px var(--font);color:#fff;background:#2c2c2e;border:0;border-radius:12px;padding:8px 12px;font-variant-numeric:tabular-nums}
+#tIn:focus{outline:2px solid var(--level)}
+#tUnit{font-size:17px;color:#d1d1d6;min-width:3em}
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px}
+.chips .btn{background:#2c2c2e;padding:7px 11px}
+.acts{display:flex;gap:8px}.acts .btn{flex:1;padding:12px;font-size:15px}
+#tSet{background:var(--level);color:#000;font-weight:700}
+#gyro{position:absolute;top:8px;right:12px;font-size:11px;color:rgba(255,255,255,.55);pointer-events:none}
+/* stacked references: one chip per tapped plane, with its angle from the plane before it */
+#refs{position:absolute;left:10px;bottom:30px;display:flex;flex-direction:column;align-items:flex-start;gap:5px;max-width:calc(100% - 100px);z-index:2}
+#refs .chip{display:flex;align-items:center;gap:6px;background:rgba(28,28,30,.86);border-radius:10px;padding:4px 9px;font-size:12px;font-variant-numeric:tabular-nums;white-space:nowrap;pointer-events:none}
+#refs .chip i{width:10px;height:10px;border-radius:50%;flex:none}
+#refs .chip.cur{box-shadow:inset 0 0 0 1.5px rgba(255,255,255,.85)}
+#refs .chip.hit{background:var(--level);color:#000}
+#refs .acts{display:flex;gap:6px}
+#refs .acts button{appearance:none;border:0;background:rgba(28,28,30,.86);color:#fff;font:600 12px var(--font);padding:5px 9px;border-radius:9px;cursor:pointer}
+#refs .acts button:focus-visible{outline:2px solid var(--level);outline-offset:2px}
+#stage{position:relative;flex:1;min-height:0;touch-action:none;cursor:pointer}
+#cv{position:absolute;inset:0;width:100%;height:100%;display:block}
+/* the reading now lives inside the sphere; the strip above keeps only the two axes and the mode line */
+#num{display:none!important}
+/* AR: the rear camera fills the screen behind everything; the glass sphere floats in front of it */
+#cam{position:fixed;inset:0;width:100%;height:100%;object-fit:cover;background:#000;display:none}
+body.ar #cam{display:block}
+body.ar #app{background:transparent!important}
+body.ar #app.level{background:rgba(52,199,89,.28)!important}
+body.ar #app.ref{background:color-mix(in srgb,var(--ref) 45%,transparent)!important}
+body.ar #read,body.ar #bar{text-shadow:0 1px 3px rgba(0,0,0,.7)}
+#arBtn.on{background:var(--level);color:#000;font-weight:700}
+#bar{flex:none;display:flex;justify-content:center;align-items:center;gap:10px;flex-wrap:wrap;padding:6px 16px calc(12px + env(safe-area-inset-bottom,0px))}
+.seg{display:inline-flex;background:var(--pill);border-radius:9px;padding:2px}
+.seg button{appearance:none;border:0;background:transparent;color:var(--fg);font:500 13px var(--font);padding:6px 12px;border-radius:7px;cursor:pointer}
+.seg button[aria-pressed="true"]{background:#636366}
+.seg button:focus-visible,#start:focus-visible{outline:2px solid var(--level);outline-offset:2px}
+#hint{position:absolute;bottom:8px;left:0;right:0;text-align:center;font-size:13px;opacity:.75;transition:opacity .6s;pointer-events:none}
+#hint.gone{opacity:0}
+#demoNote{position:absolute;top:6px;left:16px;right:16px;margin:auto;max-width:34em;background:var(--pill);font-size:12.5px;line-height:1.4;padding:7px 12px;border-radius:14px;text-align:center;pointer-events:none}
+#gate{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;
+  background:rgba(0,0,0,.78);cursor:pointer;padding:0 20px;text-align:center}
+#gate p{margin:0;font-size:15px;line-height:1.6;color:#d1d1d6;max-width:22em}
+#start{display:inline-block;background:var(--fg);color:#000;font:600 17px var(--font);padding:13px 34px;border-radius:999px}
+@media (orientation:landscape) and (max-height:560px){
+  #app{flex-direction:row;flex-wrap:wrap}
+  #read{width:42%;align-self:center;padding:0 0 0 calc(16px + env(safe-area-inset-left,0px))}
+  #stage{flex:1;height:calc(100% - 52px)}
+  #bar{width:100%;padding-top:0}
+}
+@media (prefers-reduced-motion:reduce){#app,#hint{transition:none}}
+</style>
+
+<video id="cam" playsinline muted autoplay aria-hidden="true"></video>
+<div id="app">
+  <div id="read" aria-live="off">
+    <div id="num"><span id="numV">0.0</span><span class="unit" id="numU">°</span></div>
+    <div id="axes"><span>左右<b id="ax">0.0°</b></span><span>前後<b id="ay">0.0°</b></span></div>
+    <div id="mode">平置き</div>
+  </div>
+  <div id="stage" aria-label="立体水準器。タップで現在の傾きを基準に設定、ドラッグで視点を回転">
+    <canvas id="cv"></canvas>
+    <div id="demoNote" hidden>モーションセンサーを使えない環境です。ドラッグすると傾きを再現できます。</div>
+    <div id="hint">タップで基準を追加（重ねられます） ・ ドラッグで視点を回転</div>
+    <div id="gyro" hidden></div>
+    <div id="refs" hidden></div>
+  </div>
+  <div id="bar">
+    <div class="seg" role="group" aria-label="視点">
+      <button type="button" data-v="front" aria-pressed="false">正面</button>
+      <button type="button" data-v="tilt" aria-pressed="true">斜め</button>
+      <button type="button" data-v="side" aria-pressed="false">横</button>
+    </div>
+    <div class="seg" role="group" aria-label="単位">
+      <button type="button" data-u="deg" aria-pressed="true">°</button>
+      <button type="button" data-u="pct" aria-pressed="false">%</button>
+      <button type="button" data-u="mmm" aria-pressed="false">mm/m</button>
+    </div>
+    <button class="btn" id="tBtn" type="button" aria-haspopup="dialog">目標</button>
+    <button class="btn" id="arBtn" type="button" aria-pressed="false">📷 AR</button>
+    <div class="seg" role="group" aria-label="デモの向き" id="demoSeg" hidden>
+      <button type="button" data-d="flat" aria-pressed="true">平置き</button>
+      <button type="button" data-d="up" aria-pressed="false">立てる</button>
+    </div>
+  </div>
+</div>
+<div id="sheet" hidden role="dialog" aria-modal="true" aria-labelledby="tTitle">
+  <div class="card">
+    <h2 id="tTitle">目標の角度</h2>
+    <p>この角度になると画面が緑になります。基準を設定しているときは、基準からの角度が目標になります。</p>
+    <div class="row"><input id="tIn" type="number" inputmode="decimal" step="0.1" min="0" aria-label="目標の値"><span id="tUnit">°</span></div>
+    <div class="chips" id="tChips"></div>
+    <div class="acts"><button class="btn" id="tOff" type="button">目標なし</button><button class="btn" id="tSet" type="button">設定</button></div>
+  </div>
+</div>
+<div id="gate" role="button" tabindex="0" aria-label="タップして立体水準器を開始">
+  <p>スマホの中にガラスの球があり、中の水面がいつも地面と平行に保たれます。角度は球の中に表示されます。<br>「📷 AR」で、カメラに映る景色の中にガラス球を浮かべられます。<br>画面をタップすると動き出します。モーションへのアクセスを聞かれたら「許可」を選んでください。</p>
+  <span id="start">タップして開始</span>
+</div>
+
+<script src="../3d/three.min.js"></script>
+<script>
+(() => {
+  const D2R = Math.PI / 180, R2D = 180 / Math.PI;
+  const $ = id => document.getElementById(id);
+  const app = $('app'), stage = $('stage'), cv = $('cv'), gate = $('gate'), hint = $('hint');
+  const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const norm = v => { const n = Math.hypot(v[0], v[1], v[2]) || 1; return [v[0] / n, v[1] / n, v[2] / n]; };
+  const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+
+  // ---------- sensors (same as the classic level) ----------
+  let raw = null, g = [0.06, -0.02, -1], source = 'demo', lastOrient = null, vote = -4, alive = false;
+  const orientDown = (b, gm) => { const B = b * D2R, G = gm * D2R; return [Math.sin(G) * Math.cos(B), -Math.sin(B), -Math.cos(B) * Math.cos(G)]; };
+  function onOrient(e) { if (e.beta == null || e.gamma == null) return; lastOrient = orientDown(e.beta, e.gamma); alive = true;
+    if (source !== 'motion') { raw = lastOrient; source = 'orient'; } }
+  function onMotion(e) {
+    const a = e.accelerationIncludingGravity; if (!a || a.x == null || a.y == null || a.z == null) return;
+    const n = Math.hypot(a.x, a.y, a.z); if (n < 2) return;
+    const v = [a.x / n, a.y / n, a.z / n];
+    if (lastOrient) { const d = v[1] * lastOrient[1] + v[2] * lastOrient[2]; if (Math.abs(d) > 0.3) vote = Math.max(-40, Math.min(40, vote + (d > 0 ? 1 : -1))); }
+    const s = vote >= 0 ? 1 : -1; raw = [v[0] * s, v[1] * s, v[2] * s]; source = 'motion'; alive = true;
+    fuse(raw, n / 9.81, e.rotationRate);
+  }
+
+  // ---------- gyro fusion ----------
+  // The attitude q (device → world, world z up) is integrated from the gyroscope, and gravity from the accelerometer
+  // slowly pulls it back (a complementary / Mahony filter). The gyro gives a fast, steady surface while the phone moves;
+  // the accelerometer keeps it true over time. The gyro's sign is checked against the accelerometer before it is trusted.
+  let q = null, gyroVote = 0, gyroOK = false, prevA = null, lastFuse = 0, gyroSeen = false;
+  const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+  const qMul = (a, b) => [a[0] * b[0] - a[1] * b[1] - a[2] * b[2] - a[3] * b[3], a[0] * b[1] + a[1] * b[0] + a[2] * b[3] - a[3] * b[2],
+    a[0] * b[2] - a[1] * b[3] + a[2] * b[0] + a[3] * b[1], a[0] * b[3] + a[1] * b[2] - a[2] * b[1] + a[3] * b[0]];
+  const qN = a => { const n = Math.hypot(...a) || 1; return a.map(v => v / n); };
+  const qInvRot = (q, v) => { const c = [q[0], -q[1], -q[2], -q[3]], r = qMul(qMul(c, [0, ...v]), q); return [r[1], r[2], r[3]]; };   // world → device
+  function qFromTo(u, v) { const d = dot(u, v); if (d < -0.9999) return [0, 1, 0, 0]; const c = cross(u, v); return qN([1 + d, ...c]); }
+  function fuse(a, gN, rr) {
+    const now = performance.now(), dt = lastFuse ? Math.min(0.1, (now - lastFuse) / 1000) : 0; lastFuse = now;
+    if (!q) { q = qFromTo(a, [0, 0, -1]); prevA = a; return; }
+    let w = [0, 0, 0];
+    if (rr && rr.alpha != null && rr.beta != null && rr.gamma != null) {
+      gyroSeen = true;
+      const raw = [rr.beta * D2R, rr.gamma * D2R, rr.alpha * D2R];
+      // sign check: the change gravity should show for this rotation vs. the change the accelerometer saw
+      const da = [a[0] - prevA[0], a[1] - prevA[1], a[2] - prevA[2]], pred = cross(a, raw);
+      if (Math.hypot(...raw) > 0.6 && Math.hypot(...da) > 0.004 && Math.abs(gN - 1) < 0.15) {
+        const d = dot(pred, da); if (Math.abs(d) > 1e-6) gyroVote = Math.max(-30, Math.min(30, gyroVote + (d > 0 ? 1 : -1)));
+      }
+      if (!gyroOK && Math.abs(gyroVote) >= 6) gyroOK = true;
+      if (gyroOK) { const sg = gyroVote >= 0 ? 1 : -1; w = raw.map(v => v * sg); }
+    }
+    prevA = a;
+    const dPred = qInvRot(q, [0, 0, -1]), err = cross(a, dPred);
+    const trust = Math.exp(-Math.pow((gN - 1) / 0.08, 2));                  // ignore the accelerometer while it is being shaken
+    const kp = gyroOK ? 1.4 * trust : 6;                                     // without a gyro, follow gravity like the classic level
+    const wt = [w[0] + kp * err[0], w[1] + kp * err[1], w[2] + kp * err[2]];
+    q = qN(qMul(q, [1, wt[0] * dt / 2, wt[1] * dt / 2, wt[2] * dt / 2]));
+  }
+  function screenAngle() { const a = (screen.orientation && typeof screen.orientation.angle === 'number') ? screen.orientation.angle
+    : (typeof window.orientation === 'number' ? window.orientation : 0); return a * D2R; }
+  function toScreen(v) { const a = screenAngle(), c = Math.cos(a), s = Math.sin(a); return [v[0] * c - v[1] * s, v[0] * s + v[1] * c, v[2]]; }
+
+  // demo: drag turns a virtual phone in 3D
+  let demoBase = 'flat', simX = 3.4, simY = -1.2;
+  function simVector() {
+    const ax = simY * D2R, ay = simX * D2R;
+    let v = demoBase === 'flat' ? [0, 0, -1] : [0, -1, 0];
+    if (demoBase === 'flat') v = [v[0] * Math.cos(ay) + v[2] * Math.sin(ay), v[1], -v[0] * Math.sin(ay) + v[2] * Math.cos(ay)];  // about y (left/right)
+    else v = [v[0] * Math.cos(ay) - v[1] * Math.sin(ay), v[0] * Math.sin(ay) + v[1] * Math.cos(ay), v[2]];                           // upright: roll about z
+    v = [v[0], v[1] * Math.cos(ax) - v[2] * Math.sin(ax), v[1] * Math.sin(ax) + v[2] * Math.cos(ax)];            // about x (front/back)
+    return norm(v);
+  }
+  function enterDemo(msg) { if (msg) $('demoNote').textContent = msg; source = 'demo'; $('demoNote').hidden = false; $('demoSeg').hidden = false;
+    hint.textContent = 'ドラッグで傾き ・ タップで基準 ・ 視点は下のボタン'; hint.classList.remove('gone'); }
+  document.querySelectorAll('#demoSeg button').forEach(b => b.addEventListener('click', () => {
+    demoBase = b.dataset.d; simX = demoBase === 'flat' ? 3.4 : -7.3; simY = demoBase === 'flat' ? -1.2 : 4; clearRefs();
+    document.querySelectorAll('#demoSeg button').forEach(o => o.setAttribute('aria-pressed', o === b)); }));
+
+  async function start() {
+    if (start.busy) return; start.busy = true; gate.hidden = true;
+    const asks = [];
+    if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function')
+      asks.push(DeviceMotionEvent.requestPermission().catch(() => 'denied'));
+    if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function')
+      asks.push(DeviceOrientationEvent.requestPermission().catch(() => 'denied'));
+    window.addEventListener('deviceorientation', onOrient);
+    window.addEventListener('devicemotion', onMotion);
+    try { if (navigator.wakeLock) navigator.wakeLock.request('screen').catch(() => {}); } catch (_) {}
+    const res = await Promise.all(asks);
+    const ok = res.some(r => r === 'granted') || asks.length === 0;
+    setTimeout(() => { if (!alive) enterDemo(ok ? 'センサーの値が届きませんでした。ドラッグすると傾きを再現できます。'
+      : 'モーションセンサーの利用が許可されませんでした。ドラッグすると傾きを再現できます。'); }, ok ? 1500 : 0);
+    setTimeout(() => { if (source !== 'demo') hint.classList.add('gone'); }, 5000);
+  }
+  gate.addEventListener('click', start);
+  gate.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); start(); } });
+
+  // ---------- 3D scene ----------
+  // Scene axes = the screen: x right, y up, z out of the glass toward you. The sphere is fixed to the phone;
+  // the water inside keeps its surface perpendicular to real gravity.
+  if (!window.THREE) { $('mode').textContent = '3D表示を読み込めませんでした'; return; }
+  const renderer = new THREE.WebGLRenderer({ canvas: cv, antialias: true, alpha: true });
+  renderer.localClippingEnabled = true;
+  const scene = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera(32, 1, 0.1, 50);
+  scene.add(new THREE.AmbientLight(0xffffff, 0.75));
+  const sun = new THREE.DirectionalLight(0xffffff, 0.6); sun.position.set(-2, 3, 4); scene.add(sun);
+  const R = 1;
+
+  // glass: a fresnel rim with a faint rainbow sheen, like the glass orbs in the earlier levels
+  const glassMat = new THREE.ShaderMaterial({
+    transparent: true, depthWrite: false, side: THREE.DoubleSide,
+    uniforms: { uTint: { value: new THREE.Color(1, 1, 1) } },
+    vertexShader: `varying vec3 vN; varying vec3 vV; varying vec3 vP;
+      void main(){ vec4 mv = modelViewMatrix * vec4(position,1.0); vN = normalize(normalMatrix * normal); vV = normalize(-mv.xyz); vP = position; gl_Position = projectionMatrix * mv; }`,
+    fragmentShader: `varying vec3 vN; varying vec3 vV; varying vec3 vP; uniform vec3 uTint;
+      vec3 hue(float h){ return clamp(abs(mod(h*6.0+vec3(0.0,4.0,2.0),6.0)-3.0)-1.0,0.0,1.0); }
+      void main(){
+        float f = 1.0 - abs(dot(normalize(vN), normalize(vV)));
+        float rim = pow(f, 2.6);
+        vec3 c = mix(uTint, hue(atan(vP.y, vP.x)/6.2832 + 0.5), 0.35 * rim);
+        float spec = pow(max(dot(normalize(vN), normalize(vec3(-0.4,0.6,0.7))),0.0), 60.0);
+        gl_FragColor = vec4(c + spec, clamp(rim * 0.85 + 0.04 + spec, 0.0, 1.0));
+      }` });
+  const glass = new THREE.Mesh(new THREE.SphereGeometry(R, 64, 48), glassMat);
+  glass.renderOrder = 10; scene.add(glass);
+
+  // the phone's own planes: three thin rings (flat / upright portrait / upright landscape)
+  const ringGeo = new THREE.TorusGeometry(R * 1.002, 0.008, 8, 160);
+  const mkRing = rot => { const m = new THREE.Mesh(ringGeo, new THREE.MeshBasicMaterial({ color: 0x8e8e93, transparent: true, opacity: 0.35 })); rot(m); scene.add(m); return m; };
+  const rings = { flat: mkRing(() => {}), port: mkRing(m => m.rotation.x = Math.PI / 2), land: mkRing(m => m.rotation.y = Math.PI / 2) };
+  // tick marks every 10° on the flat ring, like a protractor
+  const ticks = new THREE.Group(); scene.add(ticks);
+  for (let d = 0; d < 360; d += 10) { const t = new THREE.Mesh(new THREE.BoxGeometry(d % 90 ? 0.05 : 0.1, 0.008, 0.008), new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.45 }));
+    const a = d * D2R; t.position.set(Math.cos(a) * (R * 1.03), Math.sin(a) * (R * 1.03), 0); t.rotation.z = a; ticks.add(t); }
+
+  // the water: the lower half of the sphere (clipped by the surface plane) and the surface itself
+  const clip = new THREE.Plane(new THREE.Vector3(0, 0, -1), 0);
+  const water = new THREE.Mesh(new THREE.SphereGeometry(R * 0.985, 64, 48),
+    new THREE.MeshPhongMaterial({ color: 0xffffff, transparent: true, opacity: 0.22, side: THREE.DoubleSide, depthWrite: false, clippingPlanes: [clip], shininess: 80 }));
+  scene.add(water);
+  // the surface carries a target: concentric rings and a cross, so its tilt reads at a glance
+  const tex = (() => { const c = document.createElement('canvas'); c.width = c.height = 512; const x = c.getContext('2d');
+    x.fillStyle = '#fff'; x.fillRect(0, 0, 512, 512); x.strokeStyle = 'rgba(0,0,0,.16)'; x.lineWidth = 2;
+    for (let r = 64; r < 256; r += 64) { x.beginPath(); x.arc(256, 256, r, 0, Math.PI * 2); x.stroke(); }
+    x.beginPath(); x.moveTo(256, 0); x.lineTo(256, 512); x.moveTo(0, 256); x.lineTo(512, 256); x.stroke();
+    return new THREE.CanvasTexture(c); })();
+  const surfMat = new THREE.MeshPhongMaterial({ color: 0xffffff, map: tex, transparent: true, opacity: 0.86, side: THREE.DoubleSide, shininess: 30 });
+  const surface = new THREE.Mesh(new THREE.CircleGeometry(R * 0.985, 128), surfMat);
+  scene.add(surface);
+  // the bubble sits on the water and drifts toward the phone's high side, as in a bullseye level
+  const bubble = new THREE.Mesh(new THREE.SphereGeometry(0.11, 32, 24), new THREE.MeshPhongMaterial({ color: 0xffffff, emissive: 0x222222, shininess: 120, transparent: true, opacity: 0.95 }));
+  scene.add(bubble);
+
+  // the red reference: the surface as it was when you tapped, fixed to the phone
+  // stacked references: every tap adds the plane the water had at that moment, in its own colour, fixed to the phone;
+  // the reading is measured from the newest one, and the chips show how each plane sits relative to the one before it
+  const REF_COLORS = ['#ff3b30', '#ff9f0a', '#ffd60a', '#bf5af2', '#64d2ff', '#ff6ec7'];
+  const MAX_REFS = REF_COLORS.length;
+  const refs = [];
+  function mkRefMesh(color, k) {
+    const r = R * (1.18 + k * 0.05), g = new THREE.Group();
+    g.add(new THREE.Mesh(new THREE.CircleGeometry(r, 128), new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.4, side: THREE.DoubleSide, depthWrite: false })));
+    g.add(new THREE.Mesh(new THREE.TorusGeometry(r, 0.012, 8, 160), new THREE.MeshBasicMaterial({ color })));
+    scene.add(g); return g;
+  }
+
+  const Z = new THREE.Vector3(0, 0, 1);
+  // ---------- the reading, inside the sphere ----------
+  // Drawn on a small canvas and shown as a sprite at the sphere's centre, always facing you and drawn over the water,
+  // turning with the horizon like the number on the flat levels.
+  const numCv = document.createElement('canvas'); numCv.width = 1024; numCv.height = 512;
+  const numCtx = numCv.getContext('2d'), numTex = new THREE.CanvasTexture(numCv);
+  const numSprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: numTex, transparent: true, depthTest: false, depthWrite: false }));
+  numSprite.renderOrder = 30; numSprite.scale.set(1.6, 0.8, 1); scene.add(numSprite);
+  let numKey = '';
+  function drawNum(txt, unitS, wide, color) {
+    const key = txt + unitS + color; if (key === numKey) return; numKey = key;
+    const c = numCtx, F = getComputedStyle(document.documentElement).getPropertyValue('--font');
+    c.clearRect(0, 0, 1024, 512); c.textAlign = 'center'; c.textBaseline = 'middle';
+    c.font = `200 230px ${F}`; const w = c.measureText(txt).width;
+    c.font = wide ? `400 84px ${F}` : `200 230px ${F}`; const uw = c.measureText(unitS).width;
+    const x0 = 512 - (wide ? (w + uw + 14) / 2 - w / 2 : 0);     // the degree sign hangs off the right; wider units are centred with the digits
+    // a smoky glass badge behind the digits, so they read over white water and over the camera image alike
+    const bw = w + (wide ? uw + 14 : uw * 0.6) + 120, bx = 512 - bw / 2 + (wide ? 0 : uw * 0.3);
+    c.fillStyle = 'rgba(10,12,16,.55)'; c.beginPath(); c.roundRect(bx, 266 - 150, bw, 300, 150); c.fill();
+    c.strokeStyle = 'rgba(255,255,255,.28)'; c.lineWidth = 4; c.stroke();
+    c.font = `200 230px ${F}`; c.fillStyle = color; c.fillText(txt, x0, 270);
+    c.font = wide ? `400 84px ${F}` : `200 230px ${F}`; c.textAlign = 'left';
+    const ux = x0 + w / 2 + (wide ? 14 : 0), uy = wide ? 304 : 270;
+    c.fillText(unitS, ux, uy);
+    numTex.needsUpdate = true;
+  }
+  const orientTo = (obj, n) => obj.quaternion.setFromUnitVectors(Z, new THREE.Vector3(...n));
+
+  // ---------- view ----------
+  const VIEWS = { front: [0, 0], tilt: [24, 32], side: [72, 14] };
+  let view = { yaw: 24, pitch: 32 }, viewTarget = { yaw: 24, pitch: 32 };
+  document.querySelectorAll('[data-v]').forEach(b => b.addEventListener('click', () => {
+    const v = VIEWS[b.dataset.v]; viewTarget = { yaw: v[0], pitch: v[1] };
+    document.querySelectorAll('[data-v]').forEach(o => o.setAttribute('aria-pressed', o === b)); }));
+  document.querySelectorAll('#bar button').forEach(b => b.addEventListener('pointerdown', e => e.stopPropagation()));
+
+  let W = 0, H = 0;
+  // ---------- AR ----------
+  const cam = document.getElementById('cam'), arBtn = document.getElementById('arBtn'), CAM_FOV_LONG = 69;   // the main rear camera's view across its long side, in degrees
+  let arOn = false, camStream = null;
+  async function setAR(on) {
+    if (on) {
+      try {
+        camStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: false });
+        cam.srcObject = camStream; await cam.play().catch(() => {});
+        arOn = true; document.body.classList.add('ar');
+        document.querySelectorAll('[data-v]').forEach(b => { b.disabled = true; });
+      } catch (err) { flashMode('カメラを使えませんでした（カメラへのアクセスを許可してください）'); arOn = false; }
+    } else {
+      arOn = false; document.body.classList.remove('ar');
+      if (camStream) { camStream.getTracks().forEach(t => t.stop()); camStream = null; } cam.srcObject = null;
+      document.querySelectorAll('[data-v]').forEach(b => { b.disabled = false; });
+    }
+    arBtn.classList.toggle('on', arOn); arBtn.setAttribute('aria-pressed', String(arOn));
+  }
+  arBtn.addEventListener('pointerdown', e => e.stopPropagation());
+  arBtn.addEventListener('click', e => { e.stopPropagation(); if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { flashMode('この環境ではカメラを使えません'); return; } setAR(!arOn); });
+  document.addEventListener('visibilitychange', () => { if (document.hidden && arOn) setAR(false); });
+
+  function resize() { W = stage.clientWidth; H = stage.clientHeight; renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2.5)); renderer.setSize(W, H, false);
+    camera.aspect = W / Math.max(1, H); camera.updateProjectionMatrix(); }
+  new ResizeObserver(resize).observe(stage); resize();
+
+  // ---------- input: tap = reference, drag = orbit (or tilt in the demo) ----------
+  let ref = null, ptr = null;
+  const refsEl = document.getElementById('refs');
+  const angBetween = (a, b) => Math.acos(Math.max(-1, Math.min(1, dot(a, b)))) * 180 / Math.PI;
+  const CIRC = ['①', '②', '③', '④', '⑤', '⑥'];
+  function syncRefs() {
+    ref = refs.length ? refs[refs.length - 1].v : null;
+    if (ref) document.documentElement.style.setProperty('--ref', refs[refs.length - 1].color + '66');   // a tint, so the coloured planes stay visible against it
+    renderRefChips();
+  }
+  function addRef() {
+    if (refs.length >= MAX_REFS) { flashMode(`基準は${MAX_REFS}つまでです（「1つ消す」で減らせます）`); return; }
+    const color = REF_COLORS[refs.length];
+    refs.push({ v: gs.slice(), color, mesh: mkRefMesh(color, refs.length) });
+    syncRefs();
+  }
+  function popRef() { const r = refs.pop(); if (r) scene.remove(r.mesh); syncRefs(); }
+  function clearRefs() { while (refs.length) popRef(); }
+  let chipNodes = [];
+  function renderRefChips() {
+    refsEl.innerHTML = ''; chipNodes = [];
+    refsEl.hidden = !refs.length;
+    if (refs.length) {
+      const acts = document.createElement('div'); acts.className = 'acts';
+      const undo = document.createElement('button'); undo.type = 'button'; undo.textContent = '↶ 1つ消す';
+      const all = document.createElement('button'); all.type = 'button'; all.textContent = 'すべて消す';
+      [undo, all].forEach(b => { b.addEventListener('pointerdown', e => e.stopPropagation()); b.addEventListener('pointerup', e => e.stopPropagation()); });
+      undo.addEventListener('click', e => { e.stopPropagation(); popRef(); });
+      all.addEventListener('click', e => { e.stopPropagation(); clearRefs(); });
+      acts.append(undo, all); refsEl.appendChild(acts);
+    }
+  }
+  let flashText = '', flashUntil = 0;
+  function flashMode(t) { flashText = t; flashUntil = performance.now() + 1800; }
+  stage.addEventListener('pointerdown', e => { if (!gate.hidden) return; ptr = { x: e.clientX, y: e.clientY, sx: simX, sy: simY, yaw: viewTarget.yaw, pitch: viewTarget.pitch, moved: false }; stage.setPointerCapture(e.pointerId); });
+  stage.addEventListener('pointermove', e => {
+    if (!ptr) return; const dx = e.clientX - ptr.x, dy = e.clientY - ptr.y;
+    if (!ptr.moved && Math.hypot(dx, dy) > 6) ptr.moved = true; if (!ptr.moved) return;
+    if (source === 'demo') { simX = ptr.sx + dx * 0.12; simY = ptr.sy + dy * 0.12; }
+    else { viewTarget = { yaw: ptr.yaw + dx * 0.4, pitch: Math.max(-80, Math.min(80, ptr.pitch + dy * 0.4)) };
+      document.querySelectorAll('[data-v]').forEach(o => o.setAttribute('aria-pressed', 'false')); }
+  });
+  stage.addEventListener('pointerup', () => { if (ptr && !ptr.moved) addRef(); ptr = null; });
+  stage.addEventListener('pointercancel', () => { ptr = null; });
+
+  // ---------- loop ----------
+  const fmt = v => { let s = (Math.round(v * 10) / 10).toFixed(1); if (s === '-0.0') s = '0.0'; return s; };
+  // ---------- units ----------
+  const UNITS = { deg: { s: '°', wide: false }, pct: { s: '%', wide: true }, mmm: { s: 'mm/m', wide: true } };
+  let unit = 'deg';
+  try { const u = localStorage.getItem('l3unit'); if (UNITS[u]) unit = u; } catch (_) {}
+  const conv = (deg, u = unit) => u === 'deg' ? deg : Math.tan(deg * D2R) * (u === 'pct' ? 100 : 1000);
+  const unconv = (v, u = unit) => u === 'deg' ? v : Math.atan(v / (u === 'pct' ? 100 : 1000)) * R2D;
+  function fmtU(deg, u = unit) { if (u !== 'deg' && Math.abs(deg) >= 89.5) return '—'; const v = conv(deg, u);
+    if (u === 'mmm' && Math.abs(v) >= 100) { const s = String(Math.round(v)); return s === '-0' ? '0' : s; } return fmt(v); }
+  const numU = $('numU');
+  function setUnit(u) { unit = u; try { localStorage.setItem('l3unit', u); } catch (_) {}
+    document.querySelectorAll('[data-u]').forEach(b => b.setAttribute('aria-pressed', b.dataset.u === u));
+    numU.textContent = UNITS[u].s; numU.classList.toggle('wide', UNITS[u].wide); lastTxt = ''; }
+  document.querySelectorAll('[data-u]').forEach(b => b.addEventListener('click', () => setUnit(b.dataset.u)));
+
+  // ---------- target angle ----------
+  let targetDeg = null;
+  try { const t = parseFloat(localStorage.getItem('l3target')); if (isFinite(t)) targetDeg = t; } catch (_) {}
+  const sheet = $('sheet'), tIn = $('tIn'), tBtn = $('tBtn');
+  const PRESETS = [1, 2, 5, 10, 15, 30, 45];
+  function updTBtn() { tBtn.textContent = targetDeg == null ? '目標' : `目標 ${fmtU(targetDeg)}${UNITS[unit].s}`; tBtn.classList.toggle('on', targetDeg != null); }
+  function openSheet() {
+    $('tUnit').textContent = UNITS[unit].s;
+    tIn.value = targetDeg != null ? fmtU(targetDeg) : '';
+    const chips = $('tChips'); chips.innerHTML = '';
+    const add = (label, fn) => { const b = document.createElement('button'); b.type = 'button'; b.className = 'btn'; b.textContent = label; b.addEventListener('click', fn); chips.appendChild(b); };
+    add('いまの角度', () => { tIn.value = fmtU(Math.abs(lastValue)); });
+    PRESETS.forEach(d => add(unit === 'deg' ? d + '°' : `${d}°(${fmtU(d)}${UNITS[unit].s})`, () => { tIn.value = fmtU(d); }));
+    sheet.hidden = false; setTimeout(() => tIn.focus(), 50);
+  }
+  function closeSheet() { sheet.hidden = true; tBtn.focus(); }
+  function saveTarget(v) { targetDeg = v; try { v == null ? localStorage.removeItem('l3target') : localStorage.setItem('l3target', String(v)); } catch (_) {} updTBtn(); }
+  tBtn.addEventListener('click', openSheet);
+  $('tSet').addEventListener('click', () => { const v = parseFloat(tIn.value); if (isFinite(v)) saveTarget(Math.min(89, Math.abs(unconv(v)))); closeSheet(); });
+  $('tOff').addEventListener('click', () => { saveTarget(null); closeSheet(); });
+  sheet.addEventListener('click', e => { if (e.target === sheet) closeSheet(); });
+  sheet.addEventListener('keydown', e => { if (e.key === 'Escape') closeSheet(); if (e.key === 'Enter') $('tSet').click(); });
+  ['pointerdown', 'pointerup'].forEach(ev => sheet.addEventListener(ev, e => e.stopPropagation()));
+  let lastValue = 0;
+  let mode = 'flat', shown = 0, shownAt = 0, isLevel = false, gs = [0, 0, -1];
+  let sl = [0, 0, -1], slv = [0, 0, 0];   // the sloshing surface normal (follows gravity with a little lag and overshoot)
+  const numEl = $('num'), axEl = $('ax'), ayEl = $('ay'), modeEl = $('mode'), gyroEl = $('gyro');
+  let lastTxt = '', last = performance.now(), textRot = 0, textRotTarget = 0;
+  setUnit(unit); updTBtn();
+  function frame(t) {
+    const dt = Math.max(0, Math.min(0.05, (t - last) / 1000)); last = t;
+    const fused = source === 'motion' && q;
+    const target = source === 'demo' ? simVector() : raw;
+    if (fused) g = qInvRot(q, [0, 0, -1]);
+    else if (target) { const a = 1 - Math.exp(-dt / (source === 'demo' ? 0.05 : 0.16)); g = norm([g[0] + (target[0] - g[0]) * a, g[1] + (target[1] - g[1]) * a, g[2] + (target[2] - g[2]) * a]); }
+    gs = toScreen(g);
+    const [x, y, z] = gs;
+    const tilt = Math.acos(Math.min(1, Math.abs(z))) * R2D;
+    if (mode === 'flat' && tilt > 50) mode = 'up'; else if (mode === 'up' && tilt < 40) mode = 'flat';
+
+    // the reading: angle from the reference if one is set, else from the nearest of the phone's own planes
+    let value;
+    const port = Math.abs(y) >= Math.abs(x);
+    if (ref) value = Math.acos(Math.max(-1, Math.min(1, dot(gs, ref)))) * R2D;
+    else if (mode === 'flat') value = tilt;
+    else { const roll = Math.atan2(-y, x) * R2D - 90; value = -(((roll + 45) % 90 + 90) % 90 - 45); }
+    if (Math.abs(value - shown) >= 0.06 || t - shownAt > 400) { shown = value; shownAt = t; }
+    const absv = Math.abs(shown); lastValue = shown;
+    // green when the reading meets the goal: 0 normally, or the target angle when one is set
+    const miss = targetDeg == null ? absv : Math.abs(absv - targetDeg);
+    if (!isLevel && miss < 0.05) isLevel = true; else if (isLevel && miss >= 0.15) isLevel = false;
+    app.classList.toggle('level', isLevel); app.classList.toggle('ref', !isLevel && !!ref && mode === 'flat');
+    const txt = fmtU(mode === 'flat' || ref ? absv : shown);
+    if (txt !== lastTxt) { lastTxt = txt; $('numV').textContent = txt; }
+    drawNum(txt, UNITS[unit].s, UNITS[unit].wide, isLevel ? '#34c759' : (ref && mode === 'flat' ? '#ffd0cc' : '#ffffff'));
+    const sfx = unit === 'deg' ? '°' : UNITS[unit].s;
+    axEl.textContent = fmtU(Math.asin(Math.max(-1, Math.min(1, x))) * R2D) + sfx;
+    ayEl.textContent = fmtU(Math.asin(Math.max(-1, Math.min(1, y))) * R2D) + sfx;
+    let mtxt = ref ? `基準${CIRC[refs.length - 1]}からの角度` : mode === 'flat' ? '平置き' : port ? '立てる(縦)' : '立てる(横)';
+    if (performance.now() < flashUntil) mtxt = flashText;
+    if (targetDeg != null) { const d = conv(absv) - conv(targetDeg), ds = unit === 'mmm' && Math.abs(d) >= 100 ? String(Math.round(d)) : fmt(d);
+      mtxt += isLevel ? ` ・ 目標 ${fmtU(targetDeg)}${sfx} ぴったり` : ` ・ 目標 ${fmtU(targetDeg)}${sfx} まで ${d > 0 ? '−' : '+'}${ds.replace('-', '')}${sfx}`; }
+    if (modeEl.textContent !== mtxt) modeEl.textContent = mtxt;
+    modeEl.classList.toggle('hit', targetDeg != null && isLevel);
+
+    // the number turns with the horizon when upright, and keeps the way the phone is held when flat (as in the classic level)
+    const roll = Math.atan2(-y, x) * R2D - 90;
+    if (mode === 'up') textRotTarget = roll * D2R; else if (tilt > 22) textRotTarget = Math.round(roll / 90) * 90 * D2R;
+    let dr = textRotTarget - textRot; dr = Math.atan2(Math.sin(dr), Math.cos(dr));
+    textRot += mode === 'up' ? dr : dr * (1 - Math.exp(-dt / 0.12)); textRot = Math.atan2(Math.sin(textRot), Math.cos(textRot));
+    numSprite.material.rotation = -textRot;
+    if (fused && String(gyroOK) !== gyroEl.dataset.on) { gyroEl.dataset.on = String(gyroOK); gyroEl.hidden = false; gyroEl.textContent = gyroOK ? 'ジャイロ併用' : 'ジャイロ確認中…'; }
+
+    // water: spring the surface normal toward gravity
+    if (reduce) sl = gs.slice();
+    else { const k = 70, c = 2 * Math.sqrt(k) * 0.32;
+      for (let i = 0; i < 3; i++) { slv[i] += (k * (gs[i] - sl[i]) - c * slv[i]) * dt; sl[i] += slv[i] * dt; } sl = norm(sl); }
+    clip.normal.set(sl[0], sl[1], sl[2]); clip.constant = 0;
+    orientTo(surface, [-sl[0], -sl[1], -sl[2]]);
+    if (fused && gyroOK) { // keep the surface's pattern still in the real world while the phone turns about the vertical
+      const wx = toScreen(qInvRot(q, [1, 0, 0])), n = new THREE.Vector3(-sl[0], -sl[1], -sl[2]);
+      const xs = new THREE.Vector3(1, 0, 0).applyQuaternion(surface.quaternion), tw = new THREE.Vector3(...wx);
+      tw.sub(n.clone().multiplyScalar(tw.dot(n))); if (tw.lengthSq() > 1e-6) { tw.normalize();
+        surface.rotateZ(Math.atan2(new THREE.Vector3().crossVectors(xs, tw).dot(n), xs.dot(tw))); }
+    }
+    // the bubble floats toward the high side of the phone's active plane, as far as the tilt pushes it
+    const planeN = ref ? [-ref[0], -ref[1], -ref[2]] : mode === 'flat' ? [0, 0, Math.sign(-z) || 1] : port ? [0, Math.sign(-y) || 1, 0] : [Math.sign(-x) || 1, 0, 0];
+    const up = [-sl[0], -sl[1], -sl[2]];
+    let off = [up[0] - planeN[0], up[1] - planeN[1], up[2] - planeN[2]];
+    const ol = Math.hypot(...off); const mag = Math.min(0.78, ol * 1.6) * R;
+    off = ol > 1e-6 ? off.map(v => v / ol) : [0, 0, 0];
+    // project onto the surface so the bubble stays on the water
+    const pd = dot(off, up); off = norm([off[0] - up[0] * pd, off[1] - up[1] * pd, off[2] - up[2] * pd]);
+    bubble.position.set(off[0] * mag + up[0] * 0.05, off[1] * mag + up[1] * 0.05, off[2] * mag + up[2] * 0.05);
+    bubble.material.color.set(isLevel ? 0x34c759 : 0xffffff);
+
+    rings.flat.material.opacity = !ref && mode === 'flat' ? 1 : 0.25;
+    rings.port.material.opacity = !ref && mode === 'up' && port ? 1 : 0.25;
+    rings.land.material.opacity = !ref && mode === 'up' && !port ? 1 : 0.25;
+    ticks.visible = !ref && mode === 'flat';
+    refs.forEach(r => orientTo(r.mesh, [-r.v[0], -r.v[1], -r.v[2]]));
+    surfMat.color.set(isLevel ? 0xe9fbe9 : 0xffffff);
+
+    // camera orbits the sphere; distance fits it to the stage
+    const e = 1 - Math.exp(-dt / 0.18); view.yaw += (viewTarget.yaw - view.yaw) * e; view.pitch += (viewTarget.pitch - view.pitch) * e;
+    if (arOn) {
+      // AR: look out of the back of the phone like its camera, with a matching field of view, so the water's surface
+      // lines up with level things in the real scene behind it
+      const sw = window.innerWidth, sh = window.innerHeight, sr = stage.getBoundingClientRect();
+      const vw = cam.videoWidth || 1440, vh = cam.videoHeight || 1920, fLong = (Math.max(vw, vh) / 2) / Math.tan(CAM_FOV_LONG / 2 * D2R);
+      const s = Math.max(sw / vw, sh / vh), fScreen = fLong * s;                    // object-fit: cover
+      camera.fov = 2 * Math.atan((sh / 2) / fScreen) * R2D; camera.aspect = sw / sh;
+      camera.setViewOffset(sw, sh, sr.left, sr.top, sr.width, sr.height);
+      const dist = R * fScreen / (0.34 * Math.min(sr.width, sr.height));
+      camera.position.set(0, 0, dist); camera.up.set(0, 1, 0); camera.lookAt(0, 0, 0); camera.updateProjectionMatrix();
+    } else {
+      if (camera.view && camera.view.enabled) { camera.clearViewOffset(); camera.fov = 32; camera.aspect = W / Math.max(1, H); camera.updateProjectionMatrix(); }
+      const fit = 1.45 / Math.tan(camera.fov / 2 * D2R) / Math.min(1, camera.aspect);
+      const cy = Math.cos(view.yaw * D2R), sy = Math.sin(view.yaw * D2R), cp = Math.cos(view.pitch * D2R), sp = Math.sin(view.pitch * D2R);
+      camera.position.set(sy * cp * fit, sp * fit, cy * cp * fit); camera.up.set(0, 1, 0); camera.lookAt(0, 0, 0);
+    }
+
+    renderer.render(scene, camera);
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+  
+  window.__l3 = { get q() { return q; }, get gyroOK() { return gyroOK; }, get gyroVote() { return gyroVote; }, unit: setUnit, target: saveTarget,  set: (sx, sy, base) => { if (base) demoBase = base; simX = sx; simY = sy; }, tapRef: () => addRef(), refs: () => refs.map(r => r.v), clearRefs: () => clearRefs(), view: v => document.querySelector(`[data-v="${v}"]`).click() };
+})();
+</script>
+</body></html>
