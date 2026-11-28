@@ -1,0 +1,455 @@
+<!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-status-bar-style" content="black"><style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);box-sizing:border-box;height:100%}[hidden]{display:none!important}</style></head><body>
+<title>深海水準器</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<style>
+/* Layout: full-screen deep-sea view (a diver's mask), the level drawn as glass air bubbles / a glass water edge,
+   and a floating glass tab bar at the bottom, after the newer iOS 水準器. Single dark look by design. */
+:root{
+  --bg:#000; --fg:#fff; --level:#34c759; --ref:#ff3b30;
+  --bar:#121214; --bar-line:#2c2c2e; --muted:#8e8e93; --pill:rgba(44,44,46,.92);
+  --font:-apple-system,BlinkMacSystemFont,"SF Pro Display","Hiragino Sans","Hiragino Kaku Gothic ProN","Helvetica Neue",Arial,sans-serif;
+  color-scheme:dark;
+}
+html,body{height:100%}
+body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--font);overflow:hidden;
+  -webkit-user-select:none;user-select:none;-webkit-tap-highlight-color:transparent;-webkit-touch-callout:none}
+#app{position:relative;height:100%;display:flex;flex-direction:column;background:#01070c}
+#stage{position:relative;flex:1;min-height:0;overflow:hidden;touch-action:none;cursor:pointer}
+#cv{position:absolute;inset:0;width:100%;height:100%;display:block}
+
+#demo{position:absolute;top:12px;left:max(16px,env(safe-area-inset-left,0px));right:max(16px,env(safe-area-inset-right,0px));
+  display:flex;flex-wrap:wrap;gap:8px 10px;align-items:center;justify-content:center;pointer-events:none}
+#demo .note{background:var(--pill);color:var(--fg);font-size:12.5px;line-height:1.4;padding:7px 12px;border-radius:14px;text-align:center;max-width:34em}
+.seg{display:inline-flex;background:var(--pill);border-radius:9px;padding:2px;pointer-events:auto}
+.seg button{appearance:none;border:0;background:transparent;color:var(--fg);font:500 13px var(--font);padding:6px 12px;border-radius:7px;cursor:pointer}
+.seg button[aria-pressed="true"]{background:#636366}
+.seg button:focus-visible,#start:focus-visible,.tab:focus-visible{outline:2px solid var(--level);outline-offset:2px}
+
+#hint{position:absolute;bottom:calc(96px + env(safe-area-inset-bottom,0px));left:0;right:0;text-align:center;font-size:13px;color:var(--fg);opacity:.75;
+  transition:opacity .6s;pointer-events:none}
+#hint.gone{opacity:0}
+
+#gate{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;
+  background:rgba(0,0,0,.72);cursor:pointer;padding-inline:max(16px,env(safe-area-inset-left,0px));text-align:center}
+#gate p{margin:0;font-size:15px;line-height:1.6;color:#d1d1d6;max-width:22em;text-wrap:balance}
+#start{display:inline-block;appearance:none;border:0;background:var(--fg);color:#000;font:600 17px var(--font);padding:13px 34px;border-radius:999px;cursor:pointer}
+
+#tabs{position:absolute;left:50%;transform:translateX(-50%);bottom:calc(14px + env(safe-area-inset-bottom,0px));display:flex;gap:4px;padding:5px;
+  border-radius:999px;background:rgba(40,62,74,.42);-webkit-backdrop-filter:blur(18px) saturate(1.4);backdrop-filter:blur(18px) saturate(1.4);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.18),inset 0 0 0 1px rgba(255,255,255,.1),0 8px 24px rgba(0,0,0,.45)}
+.tab{appearance:none;border:0;background:none;color:rgba(235,248,255,.85);display:flex;flex-direction:column;align-items:center;gap:3px;
+  font:600 11px var(--font);padding:7px 26px;border-radius:999px;cursor:pointer}
+.tab svg{width:28px;height:24px}
+.tab[aria-current="page"]{color:#fff;background:rgba(2,14,22,.6);box-shadow:inset 0 1px 0 rgba(255,255,255,.08)}
+
+#toast{position:absolute;left:50%;bottom:calc(100px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);background:var(--pill);color:var(--fg);
+  font-size:13px;padding:8px 14px;border-radius:12px;white-space:nowrap;opacity:0;transition:opacity .25s;pointer-events:none}
+#toast.show{opacity:1}
+@media (prefers-reduced-motion:reduce){#hint,#toast{transition:none}}
+</style>
+
+<div id="app">
+  <div id="stage" aria-label="水準器。タップで現在の角度を基準に設定">
+    <canvas id="cv"></canvas>
+    <div id="demo" hidden>
+      <div class="note">モーションセンサーを使えない環境です。画面をドラッグすると傾きを再現できます。</div>
+      <div class="seg" role="group" aria-label="デモの向き">
+        <button id="dFlat" type="button" aria-pressed="true">平置き</button>
+        <button id="dUp" type="button" aria-pressed="false">立てる</button>
+      </div>
+    </div>
+    <div id="hint">タップで現在の角度を基準にします</div>
+    <div id="toast" role="status"></div>
+    <div id="gate" role="button" tabindex="0" aria-label="タップして水準器を開始">
+      <p>ここは深い海の中。あなたはダイバーです。<br>画面をタップすると水準器が動き出します。<br>モーションへのアクセスを聞かれたら「許可」を選んでください。</p>
+      <span id="start">タップして開始</span>
+    </div>
+  </div>
+  <nav id="tabs">
+    <button class="tab" id="tabMeasure" type="button">
+      <svg viewBox="0 0 28 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" aria-hidden="true">
+        <rect x="2.5" y="7" width="23" height="10" rx="1.5" transform="rotate(-20 14 12)"/>
+        <path d="M8 14.6l-1-2.6M11.6 13.3l-1.5-4M15.2 12l-1-2.6M18.8 10.7l-1.5-4M22.4 9.4l-1-2.6" transform="rotate(0)"/>
+      </svg>計測</button>
+    <button class="tab" id="tabLevel" type="button" aria-current="page">
+      <svg viewBox="0 0 28 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true">
+        <rect x="2" y="7.5" width="24" height="9" rx="4.5"/>
+        <circle cx="14" cy="12" r="2.6" fill="currentColor" stroke="none"/>
+        <path d="M9.5 8v8M18.5 8v8"/>
+      </svg>水準器</button>
+  </nav>
+</div>
+
+<script>
+(() => {
+  const D2R = Math.PI / 180, R2D = 180 / Math.PI;
+  const stage = document.getElementById('stage');
+  const cv = document.getElementById('cv'), ctx = cv.getContext('2d');
+  const gate = document.getElementById('gate'), demoBar = document.getElementById('demo');
+  const hint = document.getElementById('hint'), toastEl = document.getElementById('toast');
+  const css = getComputedStyle(document.documentElement);
+  const C = { bg: css.getPropertyValue('--bg').trim() || '#000', fg: '#fff', ink: '#000',
+              level: css.getPropertyValue('--level').trim() || '#34c759', ref: css.getPropertyValue('--ref').trim() || '#ff3b30' };
+  const FONT = css.getPropertyValue('--font').trim();
+
+  let W = 0, H = 0, DPR = 1;
+  function resize() {
+    const r = stage.getBoundingClientRect();
+    DPR = Math.min(window.devicePixelRatio || 1, 3); W = r.width; H = r.height;
+    cv.width = Math.round(W * DPR); cv.height = Math.round(H * DPR);
+  }
+  new ResizeObserver(resize).observe(stage); resize();
+
+  // ---------- sensor state ----------
+  let raw = null;              // latest "down" unit vector, device coords (x right, y top, z out of screen)
+  let g = [0.04, -0.03, -1];   // smoothed
+  let source = 'demo';         // 'motion' | 'orient' | 'demo'
+  let lastOrient = null, vote = -4; // vote>=0 → down = +accel, else down = −accel (W3C convention)
+  let alive = false;
+
+  const norm = v => { const n = Math.hypot(v[0], v[1], v[2]) || 1; return [v[0] / n, v[1] / n, v[2] / n]; };
+  const orientDown = (b, gm) => { const B = b * D2R, G = gm * D2R;
+    return [Math.sin(G) * Math.cos(B), -Math.sin(B), -Math.cos(B) * Math.cos(G)]; };
+
+  function onOrient(e) {
+    if (e.beta == null || e.gamma == null) return;
+    lastOrient = orientDown(e.beta, e.gamma); alive = true;
+    if (source !== 'motion') { raw = lastOrient; source = 'orient'; }
+  }
+  function onMotion(e) {
+    const a = e.accelerationIncludingGravity;
+    if (!a || a.x == null || a.y == null || a.z == null) return;
+    const n = Math.hypot(a.x, a.y, a.z); if (n < 2) return;
+    const v = [a.x / n, a.y / n, a.z / n];
+    // Platforms disagree on the sign; settle it against deviceorientation (whose y/z signs are reliable).
+    if (lastOrient) {
+      const d = v[1] * lastOrient[1] + v[2] * lastOrient[2];
+      if (Math.abs(d) > 0.3) vote = Math.max(-40, Math.min(40, vote + (d > 0 ? 1 : -1)));
+    }
+    const s = vote >= 0 ? 1 : -1;
+    raw = [v[0] * s, v[1] * s, v[2] * s]; source = 'motion'; alive = true;
+  }
+
+  async function start() {
+    if (start.busy) return; start.busy = true;
+    gate.hidden = true;
+    // iOS: both permission requests must be issued inside the same tap, before any await.
+    const asks = [];
+    if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function')
+      asks.push(DeviceMotionEvent.requestPermission().catch(() => 'denied'));
+    if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function')
+      asks.push(DeviceOrientationEvent.requestPermission().catch(() => 'denied'));
+    window.addEventListener('deviceorientation', onOrient);
+    window.addEventListener('devicemotion', onMotion);
+    try { if (navigator.wakeLock) navigator.wakeLock.request('screen').catch(() => {}); } catch (_) {}
+    const res = await Promise.all(asks);
+    const ok = res.some(r => r === 'granted') || asks.length === 0;
+    setTimeout(() => { if (!alive) enterDemo(ok
+      ? 'センサーの値が届きませんでした。HTTPSのページをSafariで開いてください。画面をドラッグすると傾きを再現できます。'
+      : 'この画面ではモーションセンサーの利用が許可されませんでした。画面をドラッグすると傾きを再現できます。'); }, ok ? 1500 : 0);
+    setTimeout(() => hint.classList.add('gone'), 4500);
+  }
+  gate.addEventListener("click", start);
+  gate.addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); start(); } });
+
+  // ---------- demo (drag to tilt) ----------
+  let demoBase = 'flat', simX = 3.4, simY = -1.2; // degrees
+  const K = 0.05; // degrees per px — fine enough to step through 0.1°
+  function simVector() {
+    if (demoBase === 'flat') return norm([Math.sin(simX * D2R), Math.sin(simY * D2R), -1]);
+    const r = simX * D2R; return norm([Math.sin(r), -Math.cos(r), -Math.sin(simY * D2R) * 0.6]);
+  }
+  function enterDemo(msg) { if (msg) demoBar.querySelector('.note').textContent = msg; source = 'demo'; demoBar.hidden = false; }
+  const dFlat = document.getElementById('dFlat'), dUp = document.getElementById('dUp');
+  function setBase(b) { demoBase = b; simX = b === 'flat' ? 3.4 : -7.3; simY = b === 'flat' ? -1.2 : 0;
+    dFlat.setAttribute('aria-pressed', b === 'flat'); dUp.setAttribute('aria-pressed', b === 'up'); clearRef(); }
+  dFlat.addEventListener('click', e => { e.stopPropagation(); setBase('flat'); });
+  dUp.addEventListener('click', e => { e.stopPropagation(); setBase('up'); });
+  [dFlat, dUp].forEach(b => b.addEventListener('pointerdown', e => e.stopPropagation()));
+
+  let ptr = null;
+  stage.addEventListener('pointerdown', e => {
+    if (!gate.hidden) return;
+    ptr = { x: e.clientX, y: e.clientY, sx: simX, sy: simY, moved: false };
+    stage.setPointerCapture(e.pointerId);
+  });
+  stage.addEventListener('pointermove', e => {
+    if (!ptr) return;
+    const dx = e.clientX - ptr.x, dy = e.clientY - ptr.y;
+    if (!ptr.moved && Math.hypot(dx, dy) > 6) ptr.moved = true;
+    if (ptr.moved && source === 'demo') {
+      if (demoBase === 'up') { simX = ptr.sx + Math.sign(dx) * 0.04 * Math.abs(dx) * (1 + Math.pow(dx / 60, 2)); simY = ptr.sy - dy * K; }
+      else { simX = ptr.sx + dx * K; simY = ptr.sy - dy * K; }
+    }
+  });
+  stage.addEventListener('pointerup', () => {
+    if (ptr && !ptr.moved) toggleRef();
+    ptr = null;
+  });
+  stage.addEventListener('pointercancel', () => { ptr = null; });
+
+  // ---------- level logic ----------
+  let mode = 'flat', refVec = null, refRoll = null, refPhi = 0, refZ = 0, isLevel = false, shown = 0, shownAt = 0;
+  let textRot = 0, textRotTarget = 0; // the reading turns to stay upright in the real world
+  let cur = { x: 0, y: 0, z: -1, roll: 0 };
+
+  function screenAngle() {
+    const a = (screen.orientation && typeof screen.orientation.angle === 'number') ? screen.orientation.angle
+            : (typeof window.orientation === 'number' ? window.orientation : 0);
+    return a * D2R;
+  }
+  function toScreen(v) { // device → screen-upright coords (x right, y up)
+    const a = screenAngle(), c = Math.cos(a), s = Math.sin(a);
+    return [v[0] * c - v[1] * s, v[0] * s + v[1] * c, v[2]];
+  }
+  const wrap180 = d => ((d + 180) % 360 + 360) % 360 - 180;
+  const wrap45 = d => ((d + 45) % 90 + 90) % 90 - 45;
+
+  function clearRef() { refVec = null; refRoll = null; }
+  function toggleRef() {
+    if (refVec || refRoll != null) { clearRef(); return; }
+    if (mode === 'flat') refVec = [cur.x, cur.y, cur.z];
+    else { refRoll = cur.roll; refPhi = Math.atan2(-cur.y, cur.x); refZ = cur.z; } // the red "reference ground"
+  }
+
+  function toast(msg) { toastEl.textContent = msg; toastEl.classList.add('show');
+    clearTimeout(toast.t); toast.t = setTimeout(() => toastEl.classList.remove('show'), 2200); }
+  document.getElementById('tabMeasure').addEventListener('click', () => toast('このページは水準器だけを再現しています'));
+
+  // ---------- drawing ----------
+  function fmt(v) { let s = (Math.round(v * 10) / 10).toFixed(1); if (s === '-0.0') s = '0.0'; return s + '°'; }
+
+  let rotC = [0, 0];
+  function drawNumber(text, x, y, size, color) {
+    ctx.save();
+    ctx.translate(rotC[0], rotC[1]); ctx.rotate(textRot); ctx.translate(-rotC[0], -rotC[1]);
+    ctx.fillStyle = color; ctx.font = `200 ${size}px ${FONT}`;
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(text, x, y);
+    ctx.restore();
+  }
+  // degree sign hangs off the right, like iOS: center the digits, not the whole string
+  function numX(text, cx, size) {
+    ctx.font = `200 ${size}px ${FONT}`;
+    return cx + ctx.measureText('°').width / 2;
+  }
+
+  // ================= the deep sea =================
+  const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  function rng(seed) { let s = seed >>> 0 || 1; return () => (s = (s * 1664525 + 1013904223) >>> 0) / 4294967296; }
+  const SNOW = (() => { const R = rng(7), a = []; for (let i = 0; i < 140; i++) a.push({ x: R(), y: R(), d: 0.2 + R() * 0.8, s: R() * 6.28, v: 0.3 + R() * 0.7 }); return a; })();
+  let lightX = 0.5, lightY = -0.1;
+  // Background: dark water, brighter toward the surface (real "up"), light shafts from above, drifting marine snow,
+  // a faint grid that wavers like something seen through water.
+  function drawSea(tt, dt, x, y, z, hasR) {
+    // where the surface light is, on screen: toward real "up"
+    const tx = 0.5 - x * 0.75, ty = 0.5 + y * 0.75 - (z < 0 ? 0 : 0.15);
+    const k = 1 - Math.exp(-dt / 0.4); lightX += (tx - lightX) * k; lightY += (ty - lightY) * k;
+    const lx = lightX * W, ly = lightY * H - H * 0.55, up = Math.max(0, -z);      // facing up = looking toward the surface
+    const g = ctx.createRadialGradient(lx, ly, 0, lx, ly, Math.hypot(W, H) * 1.25);
+    g.addColorStop(0, `rgb(${18 + up * 14},${70 + up * 30},${92 + up * 30})`); g.addColorStop(0.35, '#073042'); g.addColorStop(0.7, '#031823'); g.addColorStop(1, '#01070c');
+    ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+    if (hasR) { ctx.fillStyle = 'rgba(255,90,70,.07)'; ctx.fillRect(0, 0, W, H); }
+    // light shafts
+    ctx.save(); ctx.globalCompositeOperation = 'lighter';
+    for (let i = 0; i < 7; i++) {
+      const sway = reduceMotion ? 0 : Math.sin(tt * 0.23 + i * 1.7) * 0.06, a0 = Math.PI / 2 + (i - 3) * 0.16 + sway, w = 0.035 + (i % 3) * 0.015;
+      const L = Math.hypot(W, H) * 1.6, al = 0.035 + 0.02 * Math.sin(tt * 0.5 + i * 2.3) + up * 0.02;
+      const sg = ctx.createLinearGradient(lx, ly, lx + Math.cos(a0) * L, ly + Math.sin(a0) * L);
+      sg.addColorStop(0, `rgba(150,230,255,${al * 1.6})`); sg.addColorStop(0.6, `rgba(90,190,230,${al * 0.5})`); sg.addColorStop(1, 'rgba(60,160,210,0)');
+      ctx.fillStyle = sg; ctx.beginPath(); ctx.moveTo(lx, ly); ctx.lineTo(lx + Math.cos(a0 - w) * L, ly + Math.sin(a0 - w) * L); ctx.lineTo(lx + Math.cos(a0 + w) * L, ly + Math.sin(a0 + w) * L); ctx.closePath(); ctx.fill();
+    }
+    ctx.restore();
+    // the grid, wavering
+    const cell = Math.min(W, H) / 5, wob = reduceMotion ? 0 : 1;
+    ctx.strokeStyle = 'rgba(140,215,240,.07)'; ctx.lineWidth = 1; ctx.beginPath();
+    for (let gx = (W / 2) % cell; gx <= W; gx += cell) for (let yy = 0; yy <= H; yy += 24) { const xx = gx + wob * 2.2 * Math.sin(yy * 0.02 + tt * 1.1 + gx * 0.01); yy ? ctx.lineTo(xx, yy) : ctx.moveTo(xx, yy); }
+    for (let gy = (H / 2) % cell; gy <= H; gy += cell) for (let xx = 0; xx <= W; xx += 24) { const yy = gy + wob * 2.2 * Math.sin(xx * 0.02 + tt * 0.9 + gy * 0.01); xx ? ctx.lineTo(xx, yy) : ctx.moveTo(xx, yy); }
+    ctx.stroke();
+    // marine snow, drifting slowly up and toward you, sliding a little as you tilt
+    ctx.save();
+    for (const p of SNOW) {
+      if (!reduceMotion) { p.y -= dt * 0.006 * p.v; p.x += dt * 0.003 * Math.sin(tt * 0.4 + p.s) - x * dt * 0.02 * p.d; p.y += y * dt * 0.02 * p.d;
+        if (p.y < -0.02) p.y += 1.04; if (p.y > 1.02) p.y -= 1.04; if (p.x < -0.02) p.x += 1.04; if (p.x > 1.02) p.x -= 1.04; }
+      const r = 0.5 + p.d * 1.6, a = 0.15 + 0.45 * p.d * (0.6 + 0.4 * Math.sin(tt * 1.3 + p.s));
+      ctx.fillStyle = `rgba(200,240,255,${a.toFixed(3)})`; ctx.beginPath(); ctx.arc(p.x * W, p.y * H, r, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.restore();
+  }
+  function glow(x0, y0, r, color) { const g = ctx.createRadialGradient(x0, y0, 0, x0, y0, r); g.addColorStop(0, color); g.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.save(); ctx.globalCompositeOperation = 'lighter'; ctx.fillStyle = g; ctx.fillRect(x0 - r, y0 - r, r * 2, r * 2); ctx.restore(); }
+  // An air bubble drawn as dark glass: a smoky body, a bright rim that catches the light, two inner reflections,
+  // a faint rainbow at the edge and a soft highlight — and an outline that trembles a little.
+  function glassBubble(bx, by, R, tt, tint, seed) {
+    const w = reduceMotion ? 0 : 1;
+    const path = () => { ctx.beginPath(); for (let i = 0; i <= 96; i++) { const th = i / 96 * Math.PI * 2;
+      const r = R * (1 + w * (0.012 * Math.sin(3 * th + tt * 2.1 + seed) + 0.007 * Math.sin(5 * th - tt * 2.9 + seed * 2)));
+      i ? ctx.lineTo(bx + Math.cos(th) * r, by + Math.sin(th) * r) : ctx.moveTo(bx + Math.cos(th) * r, by + Math.sin(th) * r); } ctx.closePath(); };
+    const body = ctx.createRadialGradient(bx - R * 0.25, by - R * 0.3, R * 0.1, bx, by, R);
+    if (tint === 'level') { body.addColorStop(0, 'rgba(60,200,140,.32)'); body.addColorStop(1, 'rgba(20,120,80,.42)'); }
+    else if (tint === 'ref') { body.addColorStop(0, 'rgba(255,120,100,.2)'); body.addColorStop(1, 'rgba(120,40,30,.4)'); }
+    else { body.addColorStop(0, 'rgba(40,70,85,.42)'); body.addColorStop(0.75, 'rgba(18,34,44,.55)'); body.addColorStop(1, 'rgba(40,64,78,.5)'); }
+    path(); ctx.fillStyle = body; ctx.fill();
+    ctx.save(); path(); ctx.clip();
+    // inner rim light (fresnel)
+    const fr = ctx.createRadialGradient(bx, by, R * 0.78, bx, by, R * 1.02);
+    fr.addColorStop(0, 'rgba(200,240,255,0)'); fr.addColorStop(1, tint === 'level' ? 'rgba(120,255,180,.4)' : tint === 'ref' ? 'rgba(255,160,140,.35)' : 'rgba(200,240,255,.28)');
+    ctx.fillStyle = fr; ctx.fillRect(bx - R * 1.1, by - R * 1.1, R * 2.2, R * 2.2);
+    // the two reflections inside, like the reference image
+    ctx.lineWidth = Math.max(1, R * 0.012); ctx.strokeStyle = 'rgba(220,245,255,.13)';
+    [[-0.55, 0.27], [0.55, 0.27]].forEach(([ox, rx]) => { ctx.beginPath(); ctx.ellipse(bx + ox * R, by, rx * R, 0.55 * R, 0, 0, Math.PI * 2); ctx.stroke(); });
+    ctx.strokeStyle = 'rgba(220,245,255,.08)'; ctx.beginPath(); ctx.moveTo(bx - R, by); ctx.lineTo(bx + R, by); ctx.stroke();
+    // highlight
+    const hl = ctx.createRadialGradient(bx - R * 0.45, by - R * 0.55, 0, bx - R * 0.45, by - R * 0.55, R * 0.45);
+    hl.addColorStop(0, 'rgba(255,255,255,.22)'); hl.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.fillStyle = hl; ctx.fillRect(bx - R, by - R, R * 2, R * 2);
+    ctx.restore();
+    // rim: bright toward the light, with a thin rainbow
+    path(); ctx.lineWidth = Math.max(1.2, R * 0.012);
+    const rim = ctx.createLinearGradient(bx - R, by - R, bx + R, by + R);
+    rim.addColorStop(0, 'rgba(255,255,255,.55)'); rim.addColorStop(0.5, 'rgba(160,210,230,.18)'); rim.addColorStop(1, 'rgba(255,255,255,.4)');
+    ctx.strokeStyle = rim; ctx.stroke();
+    ctx.save(); ctx.globalCompositeOperation = 'lighter'; ctx.lineWidth = Math.max(1, R * 0.008);
+    for (let i = 0; i < 12; i++) { ctx.strokeStyle = `hsla(${i * 30 + tt * 20},90%,65%,.09)`; ctx.beginPath(); ctx.arc(bx, by, R * 0.985, i / 12 * Math.PI * 2, (i + 1) / 12 * Math.PI * 2); ctx.stroke(); }
+    ctx.restore();
+  }
+  // The water's edge for the upright mode: a glass layer below a bright, gently rippling line.
+  function glassLayer(ang, sh, tt, tint, alpha) {
+    const span = Math.hypot(W, H) * 1.6, amp = reduceMotion ? 0 : Math.min(W, H) * 0.0045, lam = Math.min(W, H) * 0.45;
+    const edgeY = xx => sh + amp * Math.sin(2 * Math.PI * xx / lam + tt * 1.6) + amp * 0.5 * Math.sin(2 * Math.PI * xx / (lam * 0.37) - tt * 2.3);
+    ctx.save(); ctx.globalAlpha *= alpha; ctx.translate(W / 2, H / 2); ctx.rotate(ang - Math.PI / 2);
+    ctx.beginPath(); ctx.moveTo(-span, span); for (let xx = -span; xx <= span; xx += 10) ctx.lineTo(xx, edgeY(xx)); ctx.lineTo(span, span); ctx.closePath();
+    const body = ctx.createLinearGradient(0, sh, 0, sh + Math.max(W, H) * 0.7);
+    if (tint === 'level') { body.addColorStop(0, 'rgba(60,220,150,.34)'); body.addColorStop(1, 'rgba(10,60,40,.4)'); }
+    else if (tint === 'ref') { body.addColorStop(0, 'rgba(255,110,90,.3)'); body.addColorStop(1, 'rgba(90,25,20,.35)'); }
+    else { body.addColorStop(0, 'rgba(120,170,190,.22)'); body.addColorStop(0.12, 'rgba(40,70,85,.28)'); body.addColorStop(1, 'rgba(8,20,28,.45)'); }
+    ctx.fillStyle = body; ctx.fill();
+    // refracted grid lines just under the edge (they bend where they enter the glass)
+    ctx.save(); ctx.clip();
+    const cell = Math.min(W, H) / 5; ctx.strokeStyle = 'rgba(170,225,245,.1)'; ctx.lineWidth = 1; ctx.beginPath();
+    for (let gx = -span; gx <= span; gx += cell) { ctx.moveTo(gx, sh); ctx.quadraticCurveTo(gx + cell * 0.04, sh + cell * 0.4, gx + cell * 0.02, sh + span); }
+    ctx.stroke(); ctx.restore();
+    // the bright edge
+    ctx.beginPath(); for (let xx = -span; xx <= span; xx += 10) xx === -span ? ctx.moveTo(xx, edgeY(xx)) : ctx.lineTo(xx, edgeY(xx));
+    ctx.lineWidth = 2.5; ctx.strokeStyle = tint === 'level' ? 'rgba(120,255,180,.95)' : tint === 'ref' ? 'rgba(255,150,130,.95)' : 'rgba(235,250,255,.9)';
+    ctx.shadowColor = tint === 'level' ? 'rgba(48,209,88,.9)' : tint === 'ref' ? 'rgba(255,90,70,.8)' : 'rgba(170,230,255,.7)'; ctx.shadowBlur = 12; ctx.stroke();
+    ctx.restore();
+  }
+  // The diver's own breath: every few seconds a cluster of bubbles rises past the mask, toward real "up".
+  const breath = []; let nextBreath = 2.5;
+  function drawDiverBubbles(tt, dt, x, y) {
+    if (!reduceMotion && tt > nextBreath) { nextBreath = tt + 4 + Math.random() * 1.5;
+      const side = Math.random() < 0.5 ? 0.18 : 0.82;
+      for (let i = 0; i < 16; i++) breath.push({ x: side * W + (Math.random() - 0.5) * W * 0.12, y: H * (1.02 + Math.random() * 0.15), r: 2 + Math.random() * Math.random() * 16, v: 0.6 + Math.random() * 0.6, s: Math.random() * 6.3, born: tt }); }
+    const ux = -x, uy = y;                                    // real "up" on screen (canvas y is down)
+    const ul = Math.hypot(ux, uy) > 0.2 ? Math.hypot(ux, uy) : 1, vx = Math.hypot(ux, uy) > 0.2 ? ux / ul : 0, vy = Math.hypot(ux, uy) > 0.2 ? -uy / ul : -1;
+    for (let i = breath.length - 1; i >= 0; i--) {
+      const b = breath[i], sp = H * 0.28 * b.v * (1 + b.r / 20);
+      b.x += (vx * sp + Math.sin(tt * 4 + b.s) * 18) * dt; b.y += vy * sp * dt; b.r *= 1 + dt * 0.04;
+      if (b.y < -40 || b.x < -60 || b.x > W + 60 || b.y > H + 120 || tt - b.born > 9) { breath.splice(i, 1); continue; }
+      ctx.save(); ctx.lineWidth = Math.max(1, b.r * 0.14);
+      const g = ctx.createRadialGradient(b.x - b.r * 0.3, b.y - b.r * 0.35, 0, b.x, b.y, b.r);
+      g.addColorStop(0, 'rgba(255,255,255,.35)'); g.addColorStop(0.5, 'rgba(170,230,255,.06)'); g.addColorStop(1, 'rgba(200,240,255,.22)');
+      ctx.fillStyle = g; ctx.beginPath(); ctx.ellipse(b.x, b.y, b.r, b.r * (0.9 + 0.1 * Math.sin(tt * 9 + b.s)), 0, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = 'rgba(225,248,255,.55)'; ctx.stroke(); ctx.restore();
+    }
+  }
+  // The edge of the diver's mask: the view darkens and softens toward the frame.
+  function drawMask() {
+    const g = ctx.createRadialGradient(W / 2, H / 2, Math.min(W, H) * 0.42, W / 2, H / 2, Math.hypot(W, H) * 0.62);
+    g.addColorStop(0, 'rgba(0,0,0,0)'); g.addColorStop(0.75, 'rgba(0,6,10,.45)'); g.addColorStop(1, 'rgba(0,4,8,.88)');
+    ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+    ctx.save(); const r = Math.min(W, H) * 0.12, i = Math.min(W, H) * 0.025;
+    ctx.strokeStyle = 'rgba(140,210,235,.08)'; ctx.lineWidth = 2; ctx.beginPath(); ctx.roundRect(i, i, W - 2 * i, H - 2 * i, r); ctx.stroke(); ctx.restore();
+  }
+
+  let last = performance.now();
+  function frame(t) {
+    const dt = Math.max(0, Math.min(0.1, (t - last) / 1000)); last = t;
+    const target = source === 'demo' ? simVector() : raw;
+    if (target) {
+      const a = 1 - Math.exp(-dt / (source === 'demo' ? 0.05 : 0.16));
+      g = norm([g[0] + (target[0] - g[0]) * a, g[1] + (target[1] - g[1]) * a, g[2] + (target[2] - g[2]) * a]);
+    }
+    const [x, y, z] = toScreen(g);
+    const tilt = Math.acos(Math.min(1, Math.abs(z))) * R2D;
+    if (mode === 'flat' && tilt > 50) { mode = 'up'; clearRef(); }
+    else if (mode === 'up' && tilt < 40) { mode = 'flat'; clearRef(); }
+
+    const roll = Math.atan2(-y, x) * R2D - 90; // 0 when held upright in portrait
+    cur = { x, y, z, roll };
+    // Upright: the number turns with the horizon so it reads level in the real world.
+    // Flat: it keeps the last way the phone was held (portrait, landscape, upside down).
+    if (mode === 'up') textRotTarget = roll * D2R;               // same turn as the horizon line
+    else if (tilt > 22) textRotTarget = Math.round(roll / 90) * 90 * D2R;
+    let dr = textRotTarget - textRot; dr = Math.atan2(Math.sin(dr), Math.cos(dr));
+    textRot += mode === 'up' ? dr : dr * (1 - Math.exp(-dt / 0.12));
+
+    let value, dir = [0, 0];
+    if (mode === 'flat') {
+      if (refVec) {
+        const d = Math.max(-1, Math.min(1, x * refVec[0] + y * refVec[1] + z * refVec[2]));
+        value = Math.acos(d) * R2D; dir = [x - refVec[0], y - refVec[1]];
+      } else { value = tilt; dir = [x, y]; }
+    } else {
+      value = refRoll != null ? wrap180(roll - refRoll) : wrap45(roll);
+      value = -value; // clockwise rotation of the phone reads positive
+    }
+
+    // display hysteresis so the 0.1° digit doesn't chatter
+    if (Math.abs(value - shown) >= 0.06 || t - shownAt > 400) { shown = value; shownAt = t; }
+    const absv = Math.abs(shown);
+    if (!isLevel && absv < 0.05) isLevel = true; else if (isLevel && absv >= 0.15) isLevel = false;
+    const hasRef = !!refVec || refRoll != null;
+    const bg = isLevel ? C.level : (hasRef ? C.ref : C.bg);
+    const text = fmt(mode === 'flat' ? absv : shown);
+
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    const cx = W / 2, cy = H / 2, m = Math.min(W, H);
+    rotC = [cx, cy];
+    const hasR = !!refVec || refRoll != null;
+    const tt = t / 1000;
+    // breathing: the whole view rises and sinks a little, as a diver's does
+    const bob = reduceMotion ? 0 : Math.sin(tt * 0.9) * m * 0.006;
+    drawSea(tt, dt, x, y, z, hasR);
+    ctx.save(); ctx.translate(0, bob);
+
+    if (mode === 'flat') {
+      // two air bubbles drift apart as the phone tilts and merge into one when it is level
+      const R = m * 0.27;
+      const dl = Math.hypot(dir[0], dir[1]);
+      const off = Math.min(value * R * 0.055, R * 1.25);
+      const ux = dl > 1e-6 ? dir[0] / dl : 0, uy = dl > 1e-6 ? -dir[1] / dl : 0;
+      const tint = isLevel ? 'level' : hasR ? 'ref' : null;
+      glassBubble(cx + ux * off, cy + uy * off, R, tt, tint, 0);
+      glassBubble(cx - ux * off, cy - uy * off, R, tt, tint, 1.7);
+      if (isLevel) glow(cx, cy, R * 1.6, 'rgba(48,209,140,.22)');
+      const size = m * 0.17, tx = numX(text, cx, size);
+      drawNumber(text, tx, cy, size, '#f2fbff');
+    } else {
+      // the water's edge: a glass layer whose bright, softly rippling top edge stays level with the real world
+      const phi = Math.atan2(-y, x);
+      const shift = Math.max(-0.45, Math.min(0.45, -z * 0.5)) * H;
+      if (refRoll != null) {
+        const rShift = Math.max(-0.45, Math.min(0.45, -(z - refZ) * 0.5)) * H;
+        glassLayer(phi - refPhi + Math.PI / 2, rShift, tt, isLevel ? 'level' : 'ref', 0.55);
+      }
+      glassLayer(phi, shift, tt, isLevel && refRoll == null ? 'level' : null, 1);
+      // fixed marks on the phone's own horizontal, as in the reference design
+      const mk = Math.min(60, W * 0.1), ycm = cy, col = isLevel ? '#30d158' : 'rgba(236,248,255,.92)';
+      ctx.save(); ctx.lineCap = 'round'; ctx.lineWidth = 4; ctx.strokeStyle = col; ctx.shadowColor = isLevel ? 'rgba(48,209,88,.8)' : 'rgba(180,230,255,.5)'; ctx.shadowBlur = 8;
+      ctx.beginPath(); ctx.moveTo(W * 0.05, ycm); ctx.lineTo(W * 0.05 + mk, ycm); ctx.moveTo(W * 0.95 - mk, ycm); ctx.lineTo(W * 0.95, ycm); ctx.stroke(); ctx.restore();
+      const size = m * 0.2, tx = numX(text, cx, size);
+      drawNumber(text, tx, cy, size, isLevel ? '#b8ffd0' : '#f2fbff');
+    }
+    ctx.restore();
+    drawDiverBubbles(tt, dt, x, y);
+    drawMask();
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+
+})();
+</script>
+
+</body></html>
